@@ -212,6 +212,11 @@ body {
   color: #475569;
 }
 
+.admin-input option {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
 /* ── Button Styles ── */
 .btn-primary {
   background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
