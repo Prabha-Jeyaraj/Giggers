@@ -6,7 +6,6 @@ import { AppShell } from './components/layout/AppShell';
 import Landing from './features/landing/pages/Landing';
 
 // Auth
-import Welcome from './features/auth/pages/Welcome';
 import Login from './features/auth/pages/Login';
 import Register from './features/auth/pages/Register';
 import OtpVerify from './features/auth/pages/OtpVerify';
@@ -58,7 +57,7 @@ function App() {
 
         <Route element={<AppShell />}>
           {/* Auth */}
-          <Route path="/welcome" element={<Welcome />} />
+          <Route path="/welcome" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/otp" element={<OtpVerify />} />
