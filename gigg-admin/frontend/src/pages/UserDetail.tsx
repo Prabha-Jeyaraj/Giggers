@@ -446,7 +446,7 @@ const UserDetail: React.FC = () => {
                   { label: 'Company', value: kycSubmission.company_name },
                   { label: 'Aadhaar No.', value: kycSubmission.aadhaar_number ? `XXXX XXXX ${kycSubmission.aadhaar_number.slice(-4)}` : undefined },
                   { label: 'PAN No.', value: kycSubmission.pan_number },
-                  { label: 'Submitted', value: new Date(kycSubmission.submitted_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+                  { label: 'Submitted', value: new Date(kycSubmission.submitted_at).toLocaleString('en-US', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) },
                   ...(kycSubmission.reviewed_at ? [{ label: 'Reviewed', value: new Date(kycSubmission.reviewed_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) }] : []),
                 ].filter(r => r.value).map(({ label, value }) => (
                   <div

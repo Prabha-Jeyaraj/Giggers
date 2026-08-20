@@ -4,6 +4,7 @@ import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, RefreshCw } from 'lu
 import { clsx } from 'clsx';
 import { supabase } from '../../../lib/supabase';
 import type { JobTask, TaskCompletion } from '../../../types';
+import { formatTime12h } from '../../../lib/time';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -154,7 +155,7 @@ export default function PublicPipelineView() {
           <p className="text-slate-400 text-sm mt-1 font-medium">📍 {data.jobLocation}</p>
         )}
         <p className="text-slate-500 text-[11px] mt-3">
-          Last updated: {lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          Last updated: {lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
           <span className="ml-2 inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </p>
       </div>
@@ -252,7 +253,7 @@ export default function PublicPipelineView() {
                         </p>
                         {completion?.submittedAt && (
                           <p className="text-slate-500 text-[10px] mt-0.5">
-                            {new Date(completion.submittedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                            {formatTime12h(completion.submittedAt)}
                           </p>
                         )}
                       </div>

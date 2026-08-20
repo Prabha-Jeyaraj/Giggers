@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, Image as ImageIcon, CheckSquare, FileText } from 'lucide-react';
 import { AppHeader } from '../../../components/layout/Navigation';
-import { Button, Input, Textarea } from '../../../components/ui';
+import { Button, Input, Textarea, TimeInput } from '../../../components/ui';
 import { usePipelineStore, type TaskDraft } from '../../../store/pipelineStore';
 import { useUIStore } from '../../../store/uiStore';
 
@@ -187,11 +187,10 @@ export default function PipelineBuilder() {
 
             {isMiddleClockAnchored ? (
               <>
-                <Input
+                <TimeInput
                   label="At"
-                  type="time"
                   value={task.anchorTime}
-                  onChange={(e) => updateTask(index, { anchorTime: e.target.value })}
+                  onChange={(v) => updateTask(index, { anchorTime: v })}
                 />
                 <p className="text-xs text-slate-500 dark:text-slate-400 font-medium -mt-1">
                   Window is timed to this clock time (on the job's date), not to when the previous task finishes.

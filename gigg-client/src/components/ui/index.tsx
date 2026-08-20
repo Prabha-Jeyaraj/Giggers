@@ -84,6 +84,67 @@ export const Input: React.FC<InputProps> = ({ label, error, leftIcon, rightIcon,
 );
 
 // ============================================================
+// TIME INPUT (12-hour, stores/emits 24-hour "HH:MM")
+// ============================================================
+interface TimeInputProps {
+  label?: string;
+  value: string | undefined;
+  onChange: (value: string) => void;
+  required?: boolean;
+}
+
+export const TimeInput: React.FC<TimeInputProps> = ({ label, value, onChange, required }) => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value || '');
+  const hours24 = match ? parseInt(match[1], 10) : null;
+  const minutes = match ? match[2] : '00';
+  const period = hours24 === null ? 'AM' : hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 === null ? '' : String(hours24 % 12 || 12);
+
+  const emit = (nextHours12: string, nextMinutes: string, nextPeriod: string) => {
+    if (!nextHours12) { onChange(''); return; }
+    let h = parseInt(nextHours12, 10) % 12;
+    if (nextPeriod === 'PM') h += 12;
+    onChange(`${String(h).padStart(2, '0')}:${nextMinutes}`);
+  };
+
+  return (
+    <div className="w-full">
+      {label && <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 ml-1">{label}{required && ' *'}</label>}
+      <div className="grid grid-cols-3 gap-2">
+        <select
+          className="input-field appearance-none"
+          value={hours12}
+          onChange={(e) => emit(e.target.value, minutes, period)}
+        >
+          <option value="" disabled>HH</option>
+          {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
+            <option key={h} value={h}>{h}</option>
+          ))}
+        </select>
+        <select
+          className="input-field appearance-none"
+          value={hours24 === null ? '' : minutes}
+          onChange={(e) => emit(hours12 || '12', e.target.value, period)}
+        >
+          <option value="" disabled>MM</option>
+          {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <select
+          className="input-field appearance-none"
+          value={period}
+          onChange={(e) => emit(hours12 || '12', minutes, e.target.value)}
+        >
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </select>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
 // TEXTAREA
 // ============================================================
 interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {

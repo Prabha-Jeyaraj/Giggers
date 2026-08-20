@@ -1,5 +1,5 @@
 import React from 'react';
-import { Input, Select, Toggle, Textarea } from '../../../components/ui';
+import { Input, Select, Toggle, Textarea, TimeInput } from '../../../components/ui';
 import { Info, MapPin, Calculator } from 'lucide-react';
 import { JOB_CATEGORIES, parseDosAndDonts, formatDosAndDonts } from '../constants';
 import { LocationPicker } from './LocationPicker';
@@ -138,8 +138,8 @@ export function JobFormSteps({ step, state, setters }: JobFormStepsProps) {
       <>
         <Input label="Date *" type="date" value={state.date} onChange={e => setters.setDate(e.target.value)} />
         <div className="grid grid-cols-2 gap-4">
-          <Input label="Reporting Time *" type="time" value={state.reportingTime} onChange={e => setters.setReportingTime(e.target.value)} />
-          <Input label="End Time" type="time" value={state.endTime} onChange={e => setters.setEndTime(e.target.value)} />
+          <TimeInput label="Reporting Time" required value={state.reportingTime} onChange={v => setters.setReportingTime(v)} />
+          <TimeInput label="End Time" value={state.endTime} onChange={v => setters.setEndTime(v)} />
         </div>
         <Input label="City/Area *" placeholder="e.g. Bandra West, Mumbai" value={state.location} onChange={e => setters.setLocation(e.target.value)} leftIcon={<MapPin size={16} />} />
         <LocationPicker value={state.address} onChange={setters.setAddress} />

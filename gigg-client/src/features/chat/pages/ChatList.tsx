@@ -7,6 +7,7 @@ import { useChatStore } from '../../../store/chatStore';
 import { useAuthStore } from '../../../store/authStore';
 import { Briefcase, Search, Users, MessageSquare } from 'lucide-react';
 import { clsx } from 'clsx';
+import { formatTime12h } from '../../../lib/time';
 
 function formatTime(timestamp: string) {
   if (!timestamp) return '';
@@ -16,7 +17,7 @@ function formatTime(timestamp: string) {
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
   if (isToday) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return formatTime12h(date);
   }
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }

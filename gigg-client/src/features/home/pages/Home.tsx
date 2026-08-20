@@ -10,6 +10,7 @@ import { HomeHeader } from '../../../components/layout/Navigation';
 import { JobCard } from '../../../components/shared/Cards';
 import { Shield, AlertCircle } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { formatTime12Hour } from '../../../utils/formatters';
 
 export default function Home() {
   const { user } = useAuthStore();
@@ -117,7 +118,7 @@ export default function Home() {
                   </div>
                   <div className="flex-1">
                     <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mb-0.5">{job.title}</h4>
-                    <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date} • {job.reportingTime}</p>
+                    <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date} • {formatTime12Hour(job.reportingTime)}</p>
                     <p className="text-[10px] font-semibold text-slate-500 flex items-center gap-1">
                       📍 {job.location}
                     </p>
@@ -211,7 +212,7 @@ export default function Home() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mb-0.5 truncate">{job.title}</h4>
-                      <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date} • {job.reportingTime}</p>
+                      <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date} • {formatTime12Hour(job.reportingTime)}</p>
                       <p className="text-[10px] font-semibold text-slate-500 flex items-center gap-1 truncate">
                         📍 {job.location}
                       </p>

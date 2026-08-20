@@ -8,6 +8,7 @@ import { useWalletStore } from '../../../store/walletStore';
 import { useUIStore } from '../../../store/uiStore';
 import { supabase } from '../../../lib/supabase';
 import { ArrowUpRight, ArrowDownLeft, Shield, Landmark, History } from 'lucide-react';
+import { formatTime12h } from '../../../lib/time';
 
 declare global {
   interface Window {
@@ -162,7 +163,7 @@ export default function Wallet() {
                     <div>
                       <p className="font-extrabold text-sm text-slate-900 dark:text-white mb-0.5 leading-tight">{tx.description}</p>
                       <p className="text-[10px] font-bold text-slate-400">
-                         {tx.date ? new Date(tx.date).toLocaleDateString() : ''} · {tx.date ? new Date(tx.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                         {tx.date ? new Date(tx.date).toLocaleDateString() : ''} · {tx.date ? formatTime12h(tx.date) : ''}
                       </p>
                     </div>
                   </div>

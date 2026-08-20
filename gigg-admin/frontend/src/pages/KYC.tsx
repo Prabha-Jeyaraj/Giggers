@@ -148,8 +148,8 @@ function KycDetailModal({
     {
       icon: FileCheck,
       label: 'Submitted',
-      value: new Date(doc.submitted_at).toLocaleString('en-IN', {
-        day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      value: new Date(doc.submitted_at).toLocaleString('en-US', {
+        day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
       }),
     },
   ];
