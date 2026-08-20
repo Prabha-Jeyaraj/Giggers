@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, RefreshCw, X } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, RefreshCw, X, Camera } from 'lucide-react';
 import { clsx } from 'clsx';
 import { supabase } from '../../../lib/supabase';
 import type { JobTask, TaskCompletion } from '../../../types';
@@ -27,6 +27,112 @@ function statusLabel(status: string | undefined) {
   if (s === 'submitted') return 'Submitted';
   if (s === 'in_progress') return 'In Progress';
   return 'Pending';
+}
+
+function PublicTaskThumbnail({
+  completion,
+  onOpen,
+}: {
+  completion: TaskCompletion | undefined;
+  onOpen: (url: string) => void;
+}) {
+  const [imgUrl, setImgUrl] = useState<string | undefined>(completion?.imageUrl);
+  const [loading, setLoading] = useState(false);
+  const [hasResolved, setHasResolved] = useState(false);
+
+  useEffect(() => {
+    if (completion?.imageUrl) {
+      setImgUrl(completion.imageUrl);
+      return;
+    }
+
+    if (!completion?.id || hasResolved) return;
+
+    let isMounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const { data: row } = await supabase
+          .from('application_task_completions')
+          .select('image_path')
+          .eq('id', completion.id)
+          .maybeSingle();
+
+        if (row?.image_path && isMounted) {
+          const resolved = await resolveTaskImageUrl(row.image_path);
+          if (resolved && isMounted) {
+            setImgUrl(resolved);
+          }
+        }
+      } catch {}
+      if (isMounted) {
+        setLoading(false);
+        setHasResolved(true);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [completion?.id, completion?.imageUrl, hasResolved]);
+
+  const handleClick = async () => {
+    if (imgUrl) {
+      onOpen(imgUrl);
+      return;
+    }
+    if (completion?.id) {
+      setLoading(true);
+      try {
+        const { data: row } = await supabase
+          .from('application_task_completions')
+          .select('image_path')
+          .eq('id', completion.id)
+          .maybeSingle();
+
+        if (row?.image_path) {
+          const resolved = await resolveTaskImageUrl(row.image_path);
+          if (resolved) {
+            setImgUrl(resolved);
+            onOpen(resolved);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch {}
+      setLoading(false);
+    }
+  };
+
+  const isSubmittedOrComplete = completion?.status === 'submitted' || completion?.status === 'complete';
+  if (!isSubmittedOrComplete && !imgUrl) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={loading}
+      className="ml-2 shrink-0 relative group focus:outline-none flex items-center justify-center cursor-pointer"
+      title="Click to view full geo-tagged photo"
+    >
+      {imgUrl ? (
+        <img
+          src={imgUrl}
+          alt="Geo-tag proof"
+          className="w-12 h-12 rounded-lg object-cover ring-2 ring-emerald-500/50 group-hover:ring-emerald-400 group-hover:scale-105 transition-all shadow-md bg-dark-800"
+          onError={() => {
+            setImgUrl(undefined);
+            setHasResolved(false);
+          }}
+        />
+      ) : (
+        <div className="w-12 h-12 rounded-lg bg-emerald-950/60 border border-emerald-500/40 flex flex-col items-center justify-center p-1 group-hover:bg-emerald-900/60 group-hover:scale-105 transition-all shadow-md">
+          <Camera size={16} className="text-emerald-400 mb-0.5" />
+          <span className="text-[9px] font-black text-emerald-300 leading-none">Geo-tag</span>
+        </div>
+      )}
+    </button>
+  );
 }
 
 interface WorkerRow {
@@ -485,21 +591,11 @@ export default function PublicPipelineView() {
                         {statusLabel(s)}
                       </span>
 
-                      {/* Show geo-tagged image thumbnail if submitted — opens fullscreen lightbox */}
-                      {completion?.imageUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedImage(completion.imageUrl || null)}
-                          className="ml-2 shrink-0 group focus:outline-none"
-                          title="Click to view full geo-tagged photo"
-                        >
-                          <img
-                            src={completion.imageUrl}
-                            alt="Geo-tagged proof"
-                            className="w-12 h-12 rounded-lg object-cover ring-2 ring-emerald-500/40 group-hover:ring-emerald-400 group-hover:scale-105 transition-all shadow-md"
-                          />
-                        </button>
-                      )}
+                      {/* Always show geo-tagged proof thumbnail if submitted/complete or has photo */}
+                      <PublicTaskThumbnail
+                        completion={completion}
+                        onOpen={(url) => setSelectedImage(url)}
+                      />
                     </div>
                   );
                 })}
