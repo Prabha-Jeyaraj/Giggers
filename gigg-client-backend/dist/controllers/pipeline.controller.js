@@ -169,6 +169,7 @@ async function wakeClockAnchoredTasks(completions, tasks, job) {
 // GET /api/pipeline/jobs/:jobId/tasks
 async function listJobTasks(req, res) {
     const { jobId } = req.params;
+    await seedLegacyTasksIfMissing(jobId);
     const { data, error } = await supabase_1.supabase
         .from('job_tasks')
         .select('*')
@@ -350,34 +351,52 @@ async function authorizeCompletionAccess(req, applicationId) {
     }
     return { ok: false, isWorker: false, isEmployer: false };
 }
-const LEGACY_SEED_TASKS = [
-    { kind: 'opening', title: 'Reporting', description: 'Report at the venue on time', completion_type: 'tick' },
-    { kind: 'task', title: 'Take Selfie', description: 'Live tracking selfie at the venue', completion_type: 'image' },
-    { kind: 'task', title: 'Check T-Shirt', description: 'Confirm uniform t-shirt', completion_type: 'image' },
-    { kind: 'closing', title: 'Shoes Check', description: 'Confirm black shoes and close out', completion_type: 'image' },
+const DEFAULT_SEED_TASKS = [
+    {
+        kind: 'opening',
+        title: 'Confirm Arrival',
+        description: 'Upload a photo showing you have arrived at the venue.',
+        completion_type: 'image',
+        response_window_minutes: 5,
+        auto_fail_minutes: 10,
+        open_minutes_before: 10,
+        open_minutes_after: 30,
+        requires_review: true,
+    },
+    {
+        kind: 'closing',
+        title: 'Confirm Checkout',
+        description: 'Upload a photo before you leave the venue.',
+        completion_type: 'image',
+        response_window_minutes: 5,
+        auto_fail_minutes: 10,
+        open_minutes_before: 10,
+        open_minutes_after: 30,
+        requires_review: true,
+    },
 ];
-/** Jobs created before the custom-pipeline feature shipped have no
- * job_tasks rows. Seed them once, lazily, with the legacy fixed 4-step
- * list so old/in-flight jobs keep working under the new pipeline UI. */
+/** Jobs that have no job_tasks rows lazily receive the standard
+ * opening (Confirm Arrival) and closing (Confirm Checkout) tasks
+ * so the pipeline is always visible, interactive, and functional. */
 async function seedLegacyTasksIfMissing(jobId) {
-    const { data: job } = await supabase_1.supabase.from('jobs').select('created_at').eq('id', jobId).single();
-    if (!job)
-        return;
-    // Only seed legacy tasks for jobs created before we shipped the custom pipeline builder
-    if (new Date(job.created_at) >= new Date('2026-07-21T00:00:00.000Z')) {
-        return;
-    }
-    const { count } = await supabase_1.supabase.from('job_tasks').select('id', { count: 'exact', head: true }).eq('job_id', jobId);
+    const { count } = await supabase_1.supabase
+        .from('job_tasks')
+        .select('id', { count: 'exact', head: true })
+        .eq('job_id', jobId);
     if (count && count > 0)
         return;
-    const rows = LEGACY_SEED_TASKS.map((t, i) => ({
+    const rows = DEFAULT_SEED_TASKS.map((t, i) => ({
         job_id: jobId,
         kind: t.kind,
         sort_order: i,
         title: t.title,
         description: t.description,
         completion_type: t.completion_type,
-        requires_review: true,
+        response_window_minutes: t.response_window_minutes,
+        auto_fail_minutes: t.auto_fail_minutes,
+        open_minutes_before: t.open_minutes_before,
+        open_minutes_after: t.open_minutes_after,
+        requires_review: t.requires_review,
     }));
     await supabase_1.supabase.from('job_tasks').insert(rows);
 }
