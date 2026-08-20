@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Job, Application, Work, FilterState } from '../types';
 import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
 
 interface JobState {
   jobs: Job[];
@@ -429,6 +430,17 @@ export const useJobStore = create<JobState>((set, get) => ({
   },
 
   fetchChatThreadId: async (jobId: string, workerId: string, employerId?: string) => {
+    try {
+      const res = await api.post<{ threadId: string }>('/api/chat/threads', {
+        jobId,
+        workerId,
+        employerId,
+      });
+      if (res?.threadId) return res.threadId;
+    } catch (backendErr) {
+      console.warn('[jobStore] Backend fetchChatThreadId fallback to Supabase:', backendErr);
+    }
+
     const { data: existing } = await supabase
       .from('chat_threads')
       .select('id')

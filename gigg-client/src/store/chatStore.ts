@@ -28,17 +28,17 @@ interface ChatState {
 
 export function mapMessage(row: Record<string, unknown>): ChatMessage {
   return {
-    id: row.id as string,
-    threadId: row.thread_id as string,
-    senderId: row.sender_id as string,
-    text: (row.content as string) || (row.text as string) || '',
+    id: (row.id as string) || '',
+    threadId: (row.thread_id as string) || (row.threadId as string) || '',
+    senderId: (row.sender_id as string) || (row.senderId as string) || '',
+    text: (row.text as string) || (row.content as string) || '',
     type: (row.type as ChatMessage['type']) || 'text',
-    sentAt: (row.created_at as string) || (row.sent_at as string) || new Date().toISOString(),
-    isRead: Boolean(row.is_read) || Boolean(row.read_at),
-    duration: row.video_duration_seconds as number | undefined,
-    jobTaskId: row.job_task_id as string | undefined,
-    deliveredAt: row.delivered_at as string | undefined,
-    readAt: row.read_at as string | undefined,
+    sentAt: (row.sent_at as string) || (row.created_at as string) || (row.sentAt as string) || new Date().toISOString(),
+    isRead: Boolean(row.is_read) || Boolean(row.isRead) || Boolean(row.read_at) || Boolean(row.readAt),
+    duration: (row.video_duration_seconds as number) || (row.duration as number) || undefined,
+    jobTaskId: (row.job_task_id as string) || (row.jobTaskId as string) || undefined,
+    deliveredAt: (row.delivered_at as string) || (row.deliveredAt as string) || undefined,
+    readAt: (row.read_at as string) || (row.readAt as string) || undefined,
   };
 }
 
@@ -56,7 +56,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await api.get<{ threads: ChatThread[] }>('/api/chat/threads');
       if (res?.threads) {
-        set({ threads: res.threads, isLoading: false });
+        const adjustedThreads = res.threads.map((t) => {
+          if (t.isGroup) {
+            const localRead = localStorage.getItem(`group_last_read_${userId}_${t.jobId}`);
+            if (localRead && t.lastMessageAt && new Date(localRead).getTime() >= new Date(t.lastMessageAt).getTime()) {
+              return { ...t, unreadCount: 0 };
+            }
+          } else {
+            const localRead = localStorage.getItem(`private_last_read_${userId}_${t.id}`);
+            if (localRead && t.lastMessageAt && new Date(localRead).getTime() >= new Date(t.lastMessageAt).getTime()) {
+              return { ...t, unreadCount: 0 };
+            }
+          }
+          return t;
+        });
+        set({ threads: adjustedThreads, isLoading: false });
         return;
       }
     } catch (backendErr) {
