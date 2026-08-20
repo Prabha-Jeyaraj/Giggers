@@ -18,21 +18,13 @@ interface CameraCaptureModalProps {
 }
 
 function cleanAddressString(raw: string, lat: number, lng: number): string {
-  // Check if within Anna University Main / ACTech / CEG / Guindy campus zone
-  const isAnnaUnivZone =
-    (lat >= 13.004 && lat <= 13.020 && lng >= 80.230 && lng <= 80.246) ||
-    /alagappa\s*college|anna\s*univ|ceg|atumx|au-tbi/i.test(raw);
-
-  if (isAnnaUnivZone) {
-    return 'Anna University Campus, Sardar Patel Road, Guindy, Chennai';
-  }
-
-  // Remove noise like "CMWSSB Division \d+", "Ward \d+", "Zone \d+", "Chennai Corporation"
+  // Remove administrative noise like "CMWSSB Division \d+", "Ward \d+", "Zone \d+", "Chennai Corporation", postal codes
   const cleaned = raw
     .replace(/CMWSSB\s*Division\s*\d+,?/gi, '')
     .replace(/Ward\s*\d+,?/gi, '')
     .replace(/Zone\s*\d+[^,]+,?/gi, '')
     .replace(/Chennai\s*Corporation,?/gi, '')
+    .replace(/\b\d{6}\b,?/g, '')
     .replace(/,\s*,/g, ',')
     .replace(/^,\s*|,\s*$/g, '')
     .trim();
@@ -43,11 +35,6 @@ function cleanAddressString(raw: string, lat: number, lng: number): string {
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  // Check Anna University Campus zone directly from coordinates
-  if (lat >= 13.004 && lat <= 13.020 && lng >= 80.230 && lng <= 80.246) {
-    return 'Anna University Campus, Sardar Patel Road, Guindy, Chennai';
-  }
-
   // 1. Try Google Maps reverse-geocoding via backend (with auth)
   try {
     const data = await api.get<{ formattedAddress?: string; area?: string; city?: string }>(
@@ -73,8 +60,8 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
       const data = await res.json();
       const addr = data.address || {};
       
-      const landmark = addr.university || addr.college || addr.school || addr.hospital || addr.amenity || addr.building;
-      const road = addr.road;
+      const landmark = addr.university || addr.college || addr.school || addr.hospital || addr.amenity || addr.building || addr.office;
+      const road = addr.road || addr.street;
       const neighborhood = addr.neighbourhood || addr.suburb || addr.city_district || addr.subdivision;
       const city = addr.city || addr.town || addr.county || '';
 
