@@ -115,7 +115,7 @@ async function submitKycHandler(req, res) {
     }
     const kycPayload = {
         user_id: userId,
-        type: 'other',
+        type: 'identity',
         status: 'pending',
         full_name: name,
         city,

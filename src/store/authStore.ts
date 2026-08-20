@@ -7,9 +7,10 @@ interface AuthState {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  error: string | null;
 
   sendOtp: (phone: string) => Promise<void>;
-  verifyOtp: (phone: string, otp: string, role: 'worker' | 'employer', name?: string) => Promise<boolean>;
+  verifyOtp: (phone: string, otp: string, role: 'worker' | 'employer' | 'admin', name?: string) => Promise<boolean>;
   login: (phone: string, role: 'worker' | 'employer' | 'admin') => Promise<void>;
   register: (data: Partial<UserProfile> & { role: 'worker' | 'employer' | 'admin' }) => Promise<void>;
   logout: () => Promise<void>;
@@ -24,7 +25,7 @@ function mapProfile(row: Record<string, unknown>): UserProfile {
     name: (row.name as string) || '',
     email: (row.email as string) || '',
     phone: (row.phone as string) || '',
-    role: (row.role as 'worker' | 'employer' | 'admin') || 'worker',
+    role: ((row.role as string) === 'admin' ? 'worker' : (row.role as 'worker' | 'employer')) || 'worker',
     avatar: row.avatar as string | undefined,
     isVerified: Boolean(row.is_verified),
     isApproved: Boolean(row.is_approved),
@@ -56,17 +57,15 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       isLoading: false,
-      error: null,
+      error: null as string | null,
 
-      /** Send OTP — dev mode: accepts any 10-digit number, no real SMS sent */
       sendOtp: async (phone: string) => {
         set({ isLoading: true, error: null });
-        // Dev mode: simulate OTP sent for any number — no real SMS needed
         setTimeout(() => set({ isLoading: false }), 400);
       },
 
       /** Verify OTP — dev mode: any 10-digit number + OTP 1234 works */
-      verifyOtp: async (phone: string, otp: string, role: 'worker' | 'employer', name?: string) => {
+      verifyOtp: async (phone: string, otp: string, role: 'worker' | 'employer' | 'admin', name?: string) => {
         set({ isLoading: true, error: null });
         const normalized = phone.startsWith('+') ? phone : `+91${phone.replace(/\s/g, '')}`;
 
@@ -139,6 +138,20 @@ export const useAuthStore = create<AuthState>()(
             set({ user: mapProfile(newProfile as Record<string, unknown>), isAuthenticated: true, isLoading: false });
           }
         } else {
+          // If profile exists, update role to match the selected role!
+          if (role && profile.role !== role) {
+            const { data: updatedProfile, error: updateError } = await supabase
+              .from('profiles')
+              .update({ role })
+              .eq('id', authUser.id)
+              .select()
+              .single();
+            if (!updateError && updatedProfile) {
+              set({ user: mapProfile(updatedProfile as Record<string, unknown>), isAuthenticated: true, isLoading: false });
+              return true;
+            }
+          }
+          profile.role = role || profile.role;
           set({ user: mapProfile(profile as Record<string, unknown>), isAuthenticated: true, isLoading: false });
         }
 
@@ -146,7 +159,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       /** Legacy login used by OtpVerify for mock compat — now real Supabase */
-      login: async (phone: string, role: 'worker' | 'employer') => {
+      login: async (phone: string, role: 'worker' | 'employer' | 'admin') => {
         // Called after verifyOtp already authenticated; just reload profile
         set({ isLoading: true });
         const { data: { user: authUser } } = await supabase.auth.getUser();

@@ -5,7 +5,7 @@ export interface AuthenticatedRequest extends Request {
 export interface JwtPayload {
     id: string;
     phone: string;
-    role: 'worker' | 'employer' | 'client';
+    role: 'worker' | 'employer' | 'client' | 'admin';
     name: string;
 }
 export interface OtpSession {

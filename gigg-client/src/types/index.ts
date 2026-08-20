@@ -6,11 +6,13 @@ export interface UserProfile {
   name: string;
   email: string;
   phone: string;
-  role: 'worker' | 'employer' | 'client';
+  role: 'worker' | 'employer' | 'client' | 'admin';
   avatar?: string;
   selfie?: string;
   isVerified: boolean;
   isApproved: boolean;
+  isBanned?: boolean;
+  bannedReason?: string;
   aadhaarVerified: boolean;
   selfieVerified: boolean;
   aadhaarNumber?: string;
@@ -41,6 +43,7 @@ export interface UserProfile {
   companyName?: string;
   companyLogo?: string;
   isVerifiedEmployer?: boolean;
+  isOnboarded: boolean;
   creditPoint: number;
   oneLiner?: string;
   upiId?: string;
@@ -96,6 +99,9 @@ export interface Job {
   modeOfPayment: 'Online' | 'Cash' | 'Wallet';
   paymentDate: string;
   dosAndDonts: string;
+  isGroupClosed?: boolean;
+  groupClosedAt?: string;
+  pipelineShareToken?: string;
 }
 
 export type JobStatus = 'draft' | 'active' | 'completed' | 'cancelled';
@@ -112,7 +118,10 @@ export interface Application {
   workerProfile?: UserProfile;
   status: ApplicationStatus;
   appliedAt: string;
-  updatedAt: string;
+  updatedAt?: string;
+  negotiatedPay?: number | null;
+  paid?: boolean;
+  paidAt?: string;
   // Legacy fixed-step pipeline fields — superseded by job_tasks/application_task_completions,
   // kept during the coexistence period (see PIPELINE_MIGRATION.sql) until old jobs are migrated.
   reportingCompleted?: boolean;
@@ -152,6 +161,10 @@ export interface ChatThread {
   lastMessage: string;
   lastMessageAt: string;
   unreadCount: number;
+  isGroup?: boolean;
+  isClosed?: boolean;
+  employerLastReadAt?: string;
+  workerLastReadAt?: string;
 }
 
 export interface ChatMessage {
@@ -168,6 +181,31 @@ export interface ChatMessage {
   duration?: number;
   videoUrl?: string;
   jobTaskId?: string;
+  deliveredAt?: string;
+  readAt?: string;
+}
+
+export interface JobRating {
+  id: string;
+  jobId: string;
+  workerId: string;
+  employerId: string;
+  rating: number;
+  review?: string;
+  createdAt: string;
+}
+
+export interface GroupChatMessage {
+  id: string;
+  jobId: string;
+  senderId: string;
+  type: 'text' | 'image' | 'file';
+  content: string;
+  createdAt: string;
+  profiles?: {
+    name: string;
+    avatar?: string;
+  };
 }
 
 export type TaskKind = 'opening' | 'task' | 'closing';

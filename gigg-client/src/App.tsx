@@ -31,6 +31,7 @@ import ClientInviteRedeem from './features/jobs/pages/ClientInviteRedeem';
 import ClientJobList from './features/jobs/pages/ClientJobList';
 import ClientPipelineView from './features/jobs/pages/ClientPipelineView';
 import EmployerWorkers from './features/jobs/pages/EmployerWorkers';
+import PublicPipelineView from './features/jobs/pages/PublicPipelineView';
 
 // Profile
 import Profile from './features/profile/pages/Profile';
@@ -38,6 +39,7 @@ import Profile from './features/profile/pages/Profile';
 // Chat
 import ChatList from './features/chat/pages/ChatList';
 import ChatThread from './features/chat/pages/ChatThread';
+import GroupChat from './features/chat/pages/GroupChat';
 
 // Wallet
 import Wallet from './features/wallet/pages/Wallet';
@@ -52,8 +54,13 @@ function App() {
     <BrowserRouter>
       <PageSeo />
       <Routes>
-        {/* Public — full-screen, outside AppShell */}
+        {/* Public Landing */}
         <Route path="/" element={<Landing />} />
+
+        {/* Public Pipeline Share Links — completely outside AppShell, no auth gate */}
+        <Route path="/pipeline/share/:shareToken/*" element={<PublicPipelineView />} />
+        <Route path="/pipeline/share/:shareToken" element={<PublicPipelineView />} />
+        <Route path="/pipeline/share" element={<PublicPipelineView />} />
 
         <Route element={<AppShell />}>
           {/* Auth */}
@@ -88,6 +95,7 @@ function App() {
           {/* Chat */}
           <Route path="/chat" element={<ChatList />} />
           <Route path="/chat/:id" element={<ChatThread />} />
+          <Route path="/group-chat/:jobId" element={<GroupChat />} />
 
           {/* Wallet */}
           <Route path="/wallet" element={<Wallet />} />

@@ -19,6 +19,8 @@ const ONBOARDING_PATHS = ['/kyc', '/pending'];
 const HIDE_NAV_PATHS = ['/welcome', '/login', '/register', '/otp', '/post-job', '/forgot-password', '/kyc', '/pending'];
 // Client invite links self-authenticate via token — never gated behind the normal auth check
 const isClientInvitePath = (pathname: string) => pathname.startsWith('/client/invite/');
+// Public pipeline share links require no auth
+const isPublicSharePath = (pathname: string) => pathname.startsWith('/pipeline/share');
 // Read-only client role — no bottom nav (that's Worker/Employer-oriented) or desktop sidebar
 const isClientPath = (pathname: string) => pathname.startsWith('/client/');
 
@@ -30,7 +32,7 @@ export const AppShell: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const isPublicPath = PUBLIC_PATHS.includes(location.pathname) || isClientInvitePath(location.pathname);
+  const isPublicPath = PUBLIC_PATHS.includes(location.pathname) || isClientInvitePath(location.pathname) || isPublicSharePath(location.pathname);
   const isOnboardingPath = ONBOARDING_PATHS.includes(location.pathname);
 
   // 1. Not logged in + trying to access protected route → go to welcome
@@ -45,12 +47,12 @@ export const AppShell: React.FC = () => {
     }
   }, [hasHydrated, isAuthenticated, isPublicPath, isOnboardingPath, navigate]);
 
-  // 2. Logged in → always refresh user status silently
+  // 2. Logged in → always refresh user status silently on route entry
   useEffect(() => {
     if (isAuthenticated) {
       refreshUser();
     }
-  }, [isAuthenticated, refreshUser]);
+  }, [isAuthenticated, location.pathname, refreshUser]);
 
   // 3. KYC gate removed — users can browse home freely, jobs are gated individually
 
@@ -117,7 +119,8 @@ export const AppShell: React.FC = () => {
     !isDetailsPage &&
     location.pathname !== '/' &&
     !isPendingApproval &&
-    !isClientPath(location.pathname);
+    !isClientPath(location.pathname) &&
+    !isPublicPath;
 
   const themeClass = user?.role === 'employer' ? 'theme-employer' : '';
 

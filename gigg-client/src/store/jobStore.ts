@@ -14,6 +14,7 @@ interface JobState {
   filters: FilterState;
   savedJobIds: string[];
   fetchJobs: () => Promise<void>;
+  fetchJobById: (jobId: string) => Promise<Job | null>;
   fetchPostedJobs: (userId: string) => Promise<void>;
   fetchAppliedJobs: (userId: string) => Promise<void>;
   selectJob: (job: Job | null) => void;
@@ -23,7 +24,7 @@ interface JobState {
   setFilters: (f: Partial<FilterState>) => void;
   postJob: (data: Partial<Job>, employerId: string) => Promise<string>;
   updateJob: (jobId: string, updates: Partial<Job>, employerId: string) => Promise<{ creditPenaltyApplied: boolean }>;
-  completeJob: (jobId: string) => void;
+  completeJob: (jobId: string) => Promise<void>;
   fetchJobCandidates: (jobId: string) => Promise<void>;
   hireWorker: (jobId: string, applicationId: string) => Promise<void>;
   rejectWorker: (applicationId: string) => Promise<void>;
@@ -31,6 +32,7 @@ interface JobState {
   declineHire: (applicationId: string) => Promise<void>;
   fetchChatThreadId: (jobId: string, workerId: string) => Promise<string | null>;
   updatePipelineStep: (applicationId: string, stepId: string) => Promise<void>;
+  updateNegotiatedPay: (applicationId: string, pay: number | null) => Promise<void>;
 }
 
 /** Flat credit-point deduction for editing a job within the last hour before it starts.
@@ -82,6 +84,9 @@ function mapJob(row: Record<string, unknown>): Job {
     modeOfPayment: (row.mode_of_payment as 'Online' | 'Cash' | 'Wallet') || 'Wallet',
     paymentDate: (row.payment_date as string) || '',
     dosAndDonts: (row.dos_and_donts as string) || '',
+    isGroupClosed: Boolean(row.is_group_closed),
+    groupClosedAt: row.group_closed_at as string | undefined,
+    pipelineShareToken: (row.pipeline_share_token as string) || (row.pipelineShareToken as string) || (row.id as string),
   };
 }
 
@@ -126,34 +131,35 @@ function mapApplication(row: Record<string, unknown>): Application {
 
   const workerProfile = profilesData
     ? {
-        id: profilesData.id as string || '',
-        name: (profilesData.name as string) || '',
-        email: (profilesData.email as string) || '',
-        phone: (profilesData.phone as string) || '',
-        role: 'worker' as const,
-        avatar: profilesData.avatar as string | undefined,
-        isVerified: Boolean(profilesData.is_verified),
-        isApproved: Boolean(profilesData.is_approved),
-        aadhaarVerified: Boolean(profilesData.aadhaar_verified),
-        selfieVerified: Boolean(profilesData.selfie_verified),
-        city: (profilesData.city as string) || '',
-        area: (profilesData.area as string) || '',
-        createdAt: (profilesData.created_at as string) || new Date().toISOString(),
-        completedJobs: Number(profilesData.completed_jobs) || 0,
-        totalJobsPosted: 0,
-        rating: Number(profilesData.rating) || 0,
-        reviewCount: Number(profilesData.review_count) || 0,
-        totalEarnings: Number(profilesData.total_earnings) || 0,
-        attendanceRate: Number(profilesData.attendance_rate) || 100,
-        creditPoint: Number(profilesData.credit_point) || 0,
-        bio: profilesData.bio as string | undefined,
-        skills: profilesData.skills as string[] | undefined,
-        languages: profilesData.languages as string[] | undefined,
-        categories: profilesData.categories as string[] | undefined,
-        gender: profilesData.gender as 'male' | 'female' | 'other' | undefined,
-        age: profilesData.age as number | undefined,
-        kycStatus: ((profilesData.kyc_status as string) || 'not_started') as 'not_started' | 'submitted' | 'approved' | 'rejected',
-      }
+      id: profilesData.id as string || '',
+      name: (profilesData.name as string) || '',
+      email: (profilesData.email as string) || '',
+      phone: (profilesData.phone as string) || '',
+      role: 'worker' as const,
+      avatar: profilesData.avatar as string | undefined,
+      isVerified: Boolean(profilesData.is_verified),
+      isApproved: Boolean(profilesData.is_approved),
+      aadhaarVerified: Boolean(profilesData.aadhaar_verified),
+      selfieVerified: Boolean(profilesData.selfie_verified),
+      city: (profilesData.city as string) || '',
+      area: (profilesData.area as string) || '',
+      createdAt: (profilesData.created_at as string) || new Date().toISOString(),
+      completedJobs: Number(profilesData.completed_jobs) || 0,
+      totalJobsPosted: 0,
+      rating: Number(profilesData.rating) || 0,
+      reviewCount: Number(profilesData.review_count) || 0,
+      totalEarnings: Number(profilesData.total_earnings) || 0,
+      attendanceRate: Number(profilesData.attendance_rate) || 100,
+      creditPoint: Number(profilesData.credit_point) || 0,
+      bio: profilesData.bio as string | undefined,
+      skills: profilesData.skills as string[] | undefined,
+      languages: profilesData.languages as string[] | undefined,
+      categories: profilesData.categories as string[] | undefined,
+      gender: profilesData.gender as 'male' | 'female' | 'other' | undefined,
+      age: profilesData.age as number | undefined,
+      kycStatus: ((profilesData.kyc_status as string) || 'not_started') as 'not_started' | 'submitted' | 'approved' | 'rejected',
+      isOnboarded: Boolean(profilesData.is_onboarded),
+    }
     : undefined;
 
   return {
@@ -170,6 +176,9 @@ function mapApplication(row: Record<string, unknown>): Application {
     selfieCompleted: Boolean(row.selfie_completed),
     tshirtCompleted: Boolean(row.tshirt_completed),
     shoesCompleted: Boolean(row.shoes_completed),
+    negotiatedPay: row.negotiated_pay != null ? Number(row.negotiated_pay) : null,
+    paid: Boolean(row.paid),
+    paidAt: row.paid_at as string | undefined,
     appliedAt: (row.applied_at as string) || new Date().toISOString(),
     updatedAt: (row.updated_at as string) || new Date().toISOString(),
   };
@@ -204,21 +213,56 @@ export const useJobStore = create<JobState>((set, get) => ({
     set({ isLoading: false });
   },
 
+  /** Fetch a single job by its ID */
+  fetchJobById: async (jobId: string) => {
+    const { jobs, myJobs } = get();
+    const existing = jobs.find(j => j.id === jobId && j.payPerWorker > 0) || myJobs.find(j => j.id === jobId && j.payPerWorker > 0);
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('*, profiles!jobs_employer_id_fkey(name, avatar, is_verified_employer)')
+      .eq('id', jobId)
+      .maybeSingle();
+
+    if (!error && data) {
+      const job = mapJob(data as unknown as Record<string, unknown>);
+      set((s) => ({
+        jobs: s.jobs.some((j) => j.id === job.id) ? s.jobs.map((j) => (j.id === job.id ? job : j)) : [...s.jobs, job],
+      }));
+      return job;
+    }
+    return null;
+  },
+
   /** Fetch jobs posted by a specific employer */
   fetchPostedJobs: async (userId: string) => {
     set({ isLoading: true });
     const { data, error } = await supabase
       .from('jobs')
-      .select('*')
+      .select(`
+        *,
+        profiles!jobs_employer_id_fkey(id, name, avatar, is_verified_employer),
+        applications(count)
+      `)
       .eq('employer_id', userId)
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      const myJobs = data.map((row) => mapJob(row as unknown as Record<string, unknown>));
+      const myJobs = data.map((row) => {
+        const base = mapJob(row as unknown as Record<string, unknown>);
+        // Override applicantsCount with the real count from the join
+        const countArr = (row as any).applications;
+        if (Array.isArray(countArr) && countArr.length > 0 && countArr[0].count !== undefined) {
+          base.applicantsCount = Number(countArr[0].count) || 0;
+        }
+        return base;
+      });
       set({ myJobs });
     }
     set({ isLoading: false });
   },
+
 
   /** Fetch applications made by a worker */
   fetchAppliedJobs: async (userId: string) => {
@@ -247,14 +291,27 @@ export const useJobStore = create<JobState>((set, get) => ({
       .select('id')
       .eq('job_id', jobId)
       .eq('worker_id', workerId)
-      .single();
+      .maybeSingle();
 
     if (!existing) {
-      await supabase.from('applications').insert({
-        job_id: jobId,
-        worker_id: workerId,
-        status: 'applied',
-      });
+      const { data: insertedApp, error: appError } = await supabase
+        .from('applications')
+        .insert({
+          job_id: jobId,
+          worker_id: workerId,
+          status: 'applied',
+        })
+        .select('*, jobs(*)')
+        .single();
+
+      if (!appError && insertedApp) {
+        const mappedApp = mapApplication(insertedApp as unknown as Record<string, unknown>);
+        set((s) => ({
+          applications: [mappedApp, ...s.applications.filter((a) => a.id !== mappedApp.id)],
+          jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, applicantsCount: (j.applicantsCount || 0) + 1 } : j)),
+        }));
+      }
+
       await supabase.rpc('increment_applicants', { job_id: jobId });
 
       // Notify employer of new applicant
@@ -327,7 +384,10 @@ export const useJobStore = create<JobState>((set, get) => ({
       throw new Error(error?.message || 'Failed to post job');
     }
     const newJob = mapJob(newRow as unknown as Record<string, unknown>);
-    set(s => ({ myJobs: [newJob, ...s.myJobs] }));
+    set(s => ({
+      myJobs: [newJob, ...s.myJobs.filter(j => j.id !== newJob.id)],
+      jobs: [newJob, ...s.jobs.filter(j => j.id !== newJob.id)],
+    }));
     return newJob.id;
   },
 
@@ -368,20 +428,52 @@ export const useJobStore = create<JobState>((set, get) => ({
     return { creditPenaltyApplied };
   },
 
-  fetchChatThreadId: async (jobId: string, workerId: string) => {
-    const { data } = await supabase
+  fetchChatThreadId: async (jobId: string, workerId: string, employerId?: string) => {
+    const { data: existing } = await supabase
       .from('chat_threads')
       .select('id')
       .eq('job_id', jobId)
       .eq('worker_id', workerId)
+      .maybeSingle();
+
+    if (existing?.id) return existing.id;
+
+    let empId = employerId;
+    if (!empId) {
+      const { data: j } = await supabase.from('jobs').select('employer_id').eq('id', jobId).single();
+      empId = j?.employer_id;
+    }
+
+    if (!empId) return null;
+
+    const { data: newThread } = await supabase
+      .from('chat_threads')
+      .upsert(
+        { job_id: jobId, worker_id: workerId, employer_id: empId, last_message_at: new Date().toISOString() },
+        { onConflict: 'job_id,worker_id' }
+      )
+      .select('id')
       .single();
-    return data?.id ?? null;
+
+    return newThread?.id ?? null;
   },
 
-  completeJob: (jobId) => set(s => ({
-    myJobs: s.myJobs.map(j => j.id === jobId ? { ...j, status: 'completed' as const } : j),
-    jobs: s.jobs.map(j => j.id === jobId ? { ...j, status: 'completed' as const } : j),
-  })),
+  completeJob: async (jobId: string) => {
+    const { error } = await supabase
+      .from('jobs')
+      .update({ status: 'completed', updated_at: new Date().toISOString() })
+      .eq('id', jobId);
+
+    if (error) {
+      console.error('Error marking job as completed:', error);
+      throw error;
+    }
+
+    set((s) => ({
+      myJobs: s.myJobs.map((j) => (j.id === jobId ? { ...j, status: 'completed' as const } : j)),
+      jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, status: 'completed' as const } : j)),
+    }));
+  },
 
   /** Fetch applicants for a specific job (employer view) */
   fetchJobCandidates: async (jobId: string) => {
@@ -390,6 +482,7 @@ export const useJobStore = create<JobState>((set, get) => ({
       .from('applications')
       .select(`
         *,
+        jobs(*),
         profiles!applications_worker_id_fkey(
           id, name, avatar, rating, review_count, city, area, bio,
           skills, languages, categories, age, gender, is_verified,
@@ -431,8 +524,22 @@ export const useJobStore = create<JobState>((set, get) => ({
 
     await supabase.rpc('increment_workers_hired', { job_id: jobId });
 
+    // Re-fetch the updated job to sync workersHired count in myJobs
+    const { data: refreshedJob } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+    if (refreshedJob) {
+      const updatedJob = mapJob(refreshedJob as unknown as Record<string, unknown>);
+      set((s) => ({
+        myJobs: s.myJobs.map((j) => j.id === jobId ? updatedJob : j),
+        jobs: s.jobs.map((j) => j.id === jobId ? updatedJob : j),
+      }));
+    }
+
     // Create chat thread between employer and worker
-    const job = myJobs.find((j) => j.id === jobId);
+    const job = get().myJobs.find((j) => j.id === jobId);
     if (candidate && job) {
       await supabase.from('chat_threads').upsert(
         {
@@ -559,23 +666,23 @@ export const useJobStore = create<JobState>((set, get) => ({
       applications: s.applications.map((app) =>
         app.id === applicationId
           ? {
-              ...app,
-              reportingCompleted: stepId === 'reporting' ? true : app.reportingCompleted,
-              selfieCompleted: stepId === 'selfie' ? true : app.selfieCompleted,
-              tshirtCompleted: stepId === 'tshirt' ? true : app.tshirtCompleted,
-              shoesCompleted: stepId === 'shoes' ? true : app.shoesCompleted,
-            }
+            ...app,
+            reportingCompleted: stepId === 'reporting' ? true : app.reportingCompleted,
+            selfieCompleted: stepId === 'selfie' ? true : app.selfieCompleted,
+            tshirtCompleted: stepId === 'tshirt' ? true : app.tshirtCompleted,
+            shoesCompleted: stepId === 'shoes' ? true : app.shoesCompleted,
+          }
           : app
       ),
       jobCandidates: s.jobCandidates.map((app) =>
         app.id === applicationId
           ? {
-              ...app,
-              reportingCompleted: stepId === 'reporting' ? true : app.reportingCompleted,
-              selfieCompleted: stepId === 'selfie' ? true : app.selfieCompleted,
-              tshirtCompleted: stepId === 'tshirt' ? true : app.tshirtCompleted,
-              shoesCompleted: stepId === 'shoes' ? true : app.shoesCompleted,
-            }
+            ...app,
+            reportingCompleted: stepId === 'reporting' ? true : app.reportingCompleted,
+            selfieCompleted: stepId === 'selfie' ? true : app.selfieCompleted,
+            tshirtCompleted: stepId === 'tshirt' ? true : app.tshirtCompleted,
+            shoesCompleted: stepId === 'shoes' ? true : app.shoesCompleted,
+          }
           : app
       ),
     }));
@@ -584,5 +691,49 @@ export const useJobStore = create<JobState>((set, get) => ({
       .from('applications')
       .update({ [column]: true, updated_at: new Date().toISOString() })
       .eq('id', applicationId);
+  },
+
+  /** Update negotiated pay override for a worker's application */
+  updateNegotiatedPay: async (applicationId, pay) => {
+    const cleanPay = pay !== null && !isNaN(Number(pay)) && Number(pay) > 0 ? Number(pay) : null;
+
+    // Optimistic update
+    set((s) => ({
+      applications: s.applications.map((app) =>
+        app.id === applicationId ? { ...app, negotiatedPay: cleanPay } : app
+      ),
+      jobCandidates: s.jobCandidates.map((app) =>
+        app.id === applicationId ? { ...app, negotiatedPay: cleanPay } : app
+      ),
+    }));
+
+    const { error } = await supabase
+      .from('applications')
+      .update({ negotiated_pay: cleanPay, updated_at: new Date().toISOString() })
+      .eq('id', applicationId);
+
+    if (error) {
+      console.error('Failed to update negotiated pay:', error);
+      throw error;
+    }
+
+    // Notify the worker if pay was updated
+    const { jobCandidates, applications } = get();
+    const candidate = jobCandidates.find((c) => c.id === applicationId) || applications.find((c) => c.id === applicationId);
+    if (candidate && candidate.workerId) {
+      const payMsg = cleanPay !== null ? `₹${cleanPay}` : `standard job rate`;
+      try {
+        await supabase.from('notifications').insert({
+          user_id: candidate.workerId,
+          type: 'application_accepted',
+          title: 'Pay Rate Updated 💰',
+          message: `Agreed pay rate updated to ${payMsg} for "${candidate.job?.title || 'your gig'}".`,
+          action_id: candidate.jobId,
+          is_read: false,
+        });
+      } catch (notifErr) {
+        console.error('Failed to insert notification:', notifErr);
+      }
+    }
   },
 }));

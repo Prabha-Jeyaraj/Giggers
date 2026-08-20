@@ -73,35 +73,58 @@ async function mapCompletion(row: Record<string, any>, clockWindow?: { opensAt: 
   };
 }
 
-/** Applies the auto-fail rule: any 'submitted' or 'in_progress' row past its
- * deadline becomes 'failed'. Clock-anchored tasks (opening/closing, or a
- * middle task with an anchor_time set) use the job-clock window (see
- * clockWindowFor); everything else uses the relative timer (available_at +
- * auto_fail_minutes). Lazy check on read, no cron needed. */
-async function applyAutoFail(completions: Record<string, any>[], tasksById: Map<string, Record<string, any>>, job: Record<string, any>) {
+/** Applies time-based transition rules when deadlines expire:
+ * 1. If deadline passes WITHOUT submission ('in_progress' or 'not_started' past deadline):
+ *    automates transition to 'failed' ("Missed / Auto-Closed — No Submission").
+ * 2. If deadline passes WITH submission ('submitted' past deadline):
+ *    automates transition to 'complete' (Auto-Approve on timeout) because the worker
+ *    submitted proof on time and shouldn't be penalized just because employer didn't review in time.
+ *    Advances to the next task and checks for application completion. */
+async function applyTimeBasedTransitions(completions: Record<string, any>[], tasksById: Map<string, Record<string, any>>, job: Record<string, any>) {
   const now = Date.now();
   const toFail: string[] = [];
+  const toAutoApprove: Record<string, any>[] = [];
+
   for (const c of completions) {
-    if (c.status !== 'in_progress' && c.status !== 'submitted') continue;
+    if (c.status !== 'in_progress' && c.status !== 'submitted' && c.status !== 'not_started') continue;
     const task = tasksById.get(c.job_task_id);
     if (!task) continue;
 
     const clockWindow = clockWindowFor(task, job, c);
-    let deadline: number;
+    let deadline: number | null = null;
     if (clockWindow) {
       deadline = clockWindow.deadline.getTime();
-    } else {
-      if (!c.available_at) continue;
+    } else if (c.available_at) {
       deadline = new Date(c.available_at).getTime() + task.auto_fail_minutes * 60_000;
     }
 
-    if (now > deadline) {
-      c.status = 'failed';
-      toFail.push(c.id);
+    if (deadline !== null && now > deadline) {
+      if (c.status === 'submitted') {
+        // Worker submitted proof on time -> Auto-Approve on timeout!
+        c.status = 'complete';
+        c.reviewed_at = new Date().toISOString();
+        toAutoApprove.push(c);
+      } else if (c.status === 'in_progress' || c.status === 'not_started') {
+        // No submission before deadline -> Missed / Expired!
+        c.status = 'failed';
+        toFail.push(c.id);
+      }
     }
   }
+
   if (toFail.length > 0) {
     await supabase.from('application_task_completions').update({ status: 'failed' }).in('id', toFail);
+  }
+
+  if (toAutoApprove.length > 0) {
+    for (const c of toAutoApprove) {
+      await supabase
+        .from('application_task_completions')
+        .update({ status: 'complete', reviewed_at: c.reviewed_at })
+        .eq('id', c.id);
+      await advanceNextTask(c.application_id, c.job_task_id);
+      await checkAndCompleteApplication(c.application_id);
+    }
   }
 }
 
@@ -289,17 +312,38 @@ export async function deleteTask(req: AuthenticatedRequest, res: Response): Prom
 }
 
 async function authorizeCompletionAccess(req: AuthenticatedRequest, applicationId: string): Promise<{ ok: boolean; isWorker: boolean; isEmployer: boolean }> {
-  const { data: application } = await supabase
+  if (req.user?.role === 'admin') return { ok: true, isWorker: true, isEmployer: true };
+
+  // Step 1: fetch application with a plain select (no embedded join) so RLS
+  // on the `jobs` table cannot silently null-out the whole row.
+  const { data: application, error: appError } = await supabase
     .from('applications')
-    .select('worker_id, job_id, jobs!inner(employer_id)')
+    .select('worker_id, job_id')
     .eq('id', applicationId)
     .single();
 
-  if (!application) return { ok: false, isWorker: false, isEmployer: false };
+  if (appError || !application) {
+    console.error('[pipeline] authorizeCompletionAccess – application fetch failed:', appError?.message);
+    return { ok: false, isWorker: false, isEmployer: false };
+  }
 
   const userId = req.user!.id;
   const isWorker = application.worker_id === userId;
-  const isEmployer = (application as any).jobs.employer_id === userId;
+
+  // Step 2: fetch the job separately so the RLS embedded-join issue never
+  // affects this auth check.
+  const { data: job, error: jobError } = await supabase
+    .from('jobs')
+    .select('employer_id')
+    .eq('id', application.job_id)
+    .single();
+
+  if (jobError || !job) {
+    console.error('[pipeline] authorizeCompletionAccess – job fetch failed:', jobError?.message);
+    return { ok: false, isWorker: false, isEmployer: false };
+  }
+
+  const isEmployer = job.employer_id === userId;
 
   if (isWorker || isEmployer) return { ok: true, isWorker, isEmployer };
 
@@ -412,7 +456,7 @@ export async function getCompletions(req: AuthenticatedRequest, res: Response): 
   const tasksById = new Map(tasks.map((t) => [t.id, t]));
   if (job) {
     await wakeClockAnchoredTasks(completions || [], tasks, job);
-    await applyAutoFail(completions || [], tasksById, job);
+    await applyTimeBasedTransitions(completions || [], tasksById, job);
   }
 
   const sorted = (completions || []).sort((a, b) => {
@@ -627,7 +671,7 @@ export async function submitImageCompletion(req: AuthenticatedRequest, res: Resp
   }
 
   const { data: task } = await supabase.from('job_tasks').select('requires_review').eq('id', completion.job_task_id).single();
-  const nextStatus = task?.requires_review ? 'submitted' : 'complete';
+  const nextStatus = task?.requires_review !== false ? 'submitted' : 'complete';
 
   let imagePath: string;
   try {
@@ -814,3 +858,167 @@ export async function getCompletionImageUrl(req: AuthenticatedRequest, res: Resp
   const url = await getSignedTaskImageUrl(completion.image_path);
   res.json({ imageUrl: url });
 }
+
+// GET /api/pipeline/public/:shareToken — no auth required, read-only
+export async function getPublicPipeline(req: any, res: any): Promise<void> {
+  const { shareToken } = req.params;
+
+  let isSingleWorker = false;
+  let singleWorkerApp: any = null;
+
+  // Check if shareToken matches an application ID or application share token
+  const { data: matchedApp } = await supabase
+    .from('applications')
+    .select('id, job_id, worker_id, status')
+    .or(`id.eq.${shareToken},pipeline_share_token.eq.${shareToken}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (matchedApp) {
+    isSingleWorker = true;
+    singleWorkerApp = matchedApp;
+  }
+
+  // Resolve the job by ID or share token
+  const jobIdToFind = isSingleWorker ? singleWorkerApp.job_id : null;
+  const { data: job } = await supabase
+    .from('jobs')
+    .select('id, title, location, pipeline_share_token')
+    .or(jobIdToFind ? `id.eq.${jobIdToFind}` : `pipeline_share_token.eq.${shareToken},id.eq.${shareToken}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (!job) {
+    res.status(404).json({ message: 'Pipeline not found or link is invalid' });
+    return;
+  }
+
+  // Find target applications
+  let applications: any[] = [];
+  if (isSingleWorker) {
+    applications = [singleWorkerApp];
+  } else {
+    const { data: appsData, error: appsError } = await supabase
+      .from('applications')
+      .select('id, worker_id, status')
+      .eq('job_id', job.id)
+      .in('status', ['hired', 'confirmed', 'completed']);
+
+    if (appsError) {
+      console.error('[pipeline] getPublicPipeline – applications fetch failed:', appsError.message);
+    }
+    applications = appsData || [];
+  }
+
+  if (applications.length === 0) {
+    res.json({
+      jobTitle: job.title,
+      jobLocation: job.location || '',
+      jobId: job.id,
+      isSingleWorker,
+      workers: [],
+    });
+    return;
+  }
+
+  // Fetch profiles for target workers
+  const workerIds = applications.map((a: any) => a.worker_id);
+  const { data: profiles, error: profilesError } = await supabase
+    .from('profiles')
+    .select('id, name, phone, avatar, selfie_url')
+    .in('id', workerIds);
+
+  if (profilesError) {
+    console.error('[pipeline] getPublicPipeline – profiles fetch failed:', profilesError.message);
+  }
+  const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+
+  // Also fetch KYC documents for real names if profile.name is missing/generic
+  const { data: kycDocs } = await supabase
+    .from('kyc_documents')
+    .select('user_id, full_name')
+    .in('user_id', workerIds);
+  const kycMap = new Map((kycDocs || []).map((k: any) => [k.user_id, k.full_name]));
+
+  // Fetch tasks for this job
+  const { data: tasks } = await supabase
+    .from('job_tasks')
+    .select('*')
+    .eq('job_id', job.id)
+    .order('sort_order', { ascending: true });
+
+  const { data: jobRow } = await supabase
+    .from('jobs')
+    .select('date, reporting_time, end_time')
+    .eq('id', job.id)
+    .single();
+
+  const tasksById = new Map((tasks || []).map((t: any) => [t.id, t]));
+
+  // Build worker pipeline data
+  const workers = await Promise.all(
+    applications.map(async (app: any, idx: number) => {
+      const profile = profileMap.get(app.worker_id);
+      const kycFullName = kycMap.get(app.worker_id);
+
+      let workerName = profile?.name?.trim();
+      // If profile name is empty or default 'Worker', try KYC full_name
+      if (!workerName || workerName === 'Worker') {
+        if (kycFullName && kycFullName.trim()) {
+          workerName = kycFullName.trim();
+        }
+      }
+
+      // If still missing/generic, use index or phone fallback
+      if (!workerName || workerName === 'Worker') {
+        if (isSingleWorker) {
+          workerName = profile?.phone ? `Worker (${profile.phone.slice(-4)})` : 'Worker';
+        } else {
+          workerName = `Worker ${idx + 1}`;
+        }
+      }
+
+      const workerAvatar = profile?.avatar || profile?.selfie_url || undefined;
+
+      let { data: completions } = await supabase
+        .from('application_task_completions')
+        .select('*')
+        .eq('application_id', app.id);
+
+      if (jobRow) {
+        await wakeClockAnchoredTasks(completions || [], tasks || [], jobRow);
+        await applyTimeBasedTransitions(completions || [], tasksById, jobRow);
+      }
+
+      const mappedCompletions = await Promise.all(
+        (completions || []).map(async (c: any) => {
+          const task = tasksById.get(c.job_task_id);
+          const clockWindow = jobRow && task ? clockWindowFor(task, jobRow, c) : null;
+          return mapCompletion(c, clockWindow);
+        })
+      );
+
+      return {
+        applicationId: app.id,
+        workerName,
+        workerAvatar,
+        tasks: (tasks || []).map(mapTask),
+        completions: mappedCompletions,
+      };
+    })
+  );
+
+  const primaryWorkerName = workers[0]?.workerName || 'Worker';
+  const pageTitle = isSingleWorker ? `${primaryWorkerName}'s Pipeline — ${job.title}` : `All Workers' Pipeline — ${job.title}`;
+
+  res.json({
+    pageTitle,
+    jobTitle: job.title,
+    jobLocation: job.location || '',
+    jobId: job.id,
+    isSingleWorker,
+    singleWorkerName: isSingleWorker ? primaryWorkerName : undefined,
+    workers,
+  });
+}
+

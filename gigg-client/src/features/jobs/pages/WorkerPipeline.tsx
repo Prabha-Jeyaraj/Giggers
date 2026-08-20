@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AppHeader } from '../../../components/layout/Navigation';
 import { Button, Input } from '../../../components/ui';
@@ -6,19 +6,14 @@ import { useJobStore } from '../../../store/jobStore';
 import { useAuthStore } from '../../../store/authStore';
 import { usePipelineStore } from '../../../store/pipelineStore';
 import { useUIStore } from '../../../store/uiStore';
-import { CheckCircle2, Circle, Camera, MapPin, Upload, Clock, XCircle } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
+import { CheckCircle2, Circle, Camera, MapPin, Upload, Clock, XCircle, Share2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 import type { JobTask, TaskCompletion } from '../../../types';
+import CameraCaptureModal from '../../../components/shared/CameraCaptureModal';
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+
 
 export default function WorkerPipeline() {
   const { jobId } = useParams();
@@ -30,37 +25,72 @@ export default function WorkerPipeline() {
 
   const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null);
   const [formDrafts, setFormDrafts] = useState<Record<string, string>>({});
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const pendingImageCompletionId = useRef<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [pendingImageCompletionId, setPendingImageCompletionId] = useState<string | null>(null);
 
-  const job = jobs.find((j) => j.id === jobId);
-  const application = applications.find((a) => a.jobId === jobId);
+  const [directApp, setDirectApp] = useState<any>(null);
+  const [directJob, setDirectJob] = useState<any>(null);
+
+  const storeJob = jobs.find((j) => j.id === jobId);
+  const storeApp = applications.find((a) => a.jobId === jobId);
+  const job = storeJob || directJob;
+  const application = storeApp || directApp;
 
   useEffect(() => {
-    if (!job) fetchJobs();
-    if (user && !application) fetchAppliedJobs(user.id);
-  }, [job, user, application, fetchJobs, fetchAppliedJobs]);
+    if (!storeJob) fetchJobs();
+    if (user && !storeApp) fetchAppliedJobs(user.id);
+  }, [storeJob, user, storeApp, fetchJobs, fetchAppliedJobs]);
 
   useEffect(() => {
-    if (application) {
-      fetchCompletions(application.id).catch(() => addToast('Failed to load pipeline', 'error'));
+    if (!jobId || !user?.id) return;
+    (async () => {
+      const { data: appData } = await supabase
+        .from('applications')
+        .select('*')
+        .eq('job_id', jobId)
+        .eq('worker_id', user.id)
+        .maybeSingle();
+      if (appData) {
+        setDirectApp({
+          id: appData.id,
+          jobId: appData.job_id,
+          workerId: appData.worker_id,
+          status: appData.status,
+        });
+      }
+
+      const { data: jData } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .maybeSingle();
+      if (jData) {
+        setDirectJob(jData);
+      }
+    })();
+  }, [jobId, user?.id]);
+
+  useEffect(() => {
+    if (application?.id) {
+      fetchCompletions(application.id).catch((err) => {
+        console.error('Failed to load completions for worker pipeline:', application.id, err);
+      });
     }
-  }, [application?.id]);
+  }, [application?.id, fetchCompletions]);
 
-  // Poll so an idle worker still observes server-side auto-fail flips without interacting.
+  // Poll so an idle worker still observes server-side auto-fail/auto-approve flips without interacting.
   useEffect(() => {
     if (!application) return;
     const interval = setInterval(() => {
       refetchCompletionsSilently(application.id).catch(() => {});
-    }, 30_000);
+    }, 15_000);
     return () => clearInterval(interval);
-  }, [application?.id]);
+  }, [application?.id, refetchCompletionsSilently]);
 
-  // Drives the response-window (blur) recompute on the same cadence as the poll above,
-  // without needing a per-second timer for every task row.
+  // 1-second dynamic clock ticker so window open/close transitions occur immediately
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -101,22 +131,19 @@ export default function WorkerPipeline() {
   };
 
   const handleOpenCamera = (completion: TaskCompletion) => {
-    pendingImageCompletionId.current = completion.id;
-    fileInputRef.current?.click();
+    setPendingImageCompletionId(completion.id);
+    setCameraOpen(true);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    const completionId = pendingImageCompletionId.current;
-    e.target.value = '';
-    if (!file || !completionId) return;
-
+  const handleCameraCapture = async (dataUrl: string) => {
+    setCameraOpen(false);
+    const completionId = pendingImageCompletionId;
+    setPendingImageCompletionId(null);
+    if (!completionId) return;
     const completion = completions.find((c) => c.id === completionId);
     if (!completion) return;
-
     setLoadingTaskId(completion.jobTaskId);
     try {
-      const dataUrl = await fileToDataUrl(file);
       await submitImage(completionId, dataUrl);
       addToast('Task submitted to employer for verification', 'success');
     } catch {
@@ -126,10 +153,30 @@ export default function WorkerPipeline() {
     }
   };
 
+  const handleShareLink = async () => {
+    if (!application?.id) {
+      addToast('Pipeline is not initialized yet', 'error');
+      return;
+    }
+    const token = application.id;
+    const url = `${window.location.origin}/pipeline/share/${token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      addToast('Your pipeline share link copied to clipboard!', 'success');
+    } catch {
+      addToast(`Pipeline link: ${url}`, 'info');
+    }
+  };
+
   return (
     <div className="pb-24 font-sans bg-slate-50 dark:bg-dark-900 min-h-screen">
       <AppHeader title="Active Job" showBack onBack={() => navigate(-1)} />
-      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+      <CameraCaptureModal
+        open={cameraOpen}
+        jobLocation={job.location || job.address}
+        onCapture={handleCameraCapture}
+        onClose={() => { setCameraOpen(false); setPendingImageCompletionId(null); }}
+      />
 
       <div className="bg-slate-800 h-40 w-full relative">
         <div className="absolute inset-0 opacity-50 bg-[url('https://maps.googleapis.com/maps/api/staticmap?center=19.076,72.877&zoom=14&size=600x300&maptype=roadmap&style=feature:all|element:labels|visibility:off')] bg-cover bg-center" />
@@ -144,7 +191,16 @@ export default function WorkerPipeline() {
 
       <div className="px-5 pt-6">
         <div className="bg-white dark:bg-dark-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-dark-700">
-          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mb-4 uppercase tracking-wider">Your Pipeline Tasks</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Your Pipeline Tasks</h3>
+            <button
+              onClick={handleShareLink}
+              title="Copy shareable pipeline link"
+              className="flex items-center gap-1.5 text-xs font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 transition-colors"
+            >
+              <Share2 size={14} /> Share
+            </button>
+          </div>
 
           <div className="flex flex-col relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 dark:before:via-dark-600 before:to-transparent">
             {tasks.map((task: JobTask, index) => {
@@ -234,8 +290,9 @@ export default function WorkerPipeline() {
                     )}
 
                     {status === 'in_progress' && isPastResponseWindow && (
-                      <div className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded inline-block mt-2">
-                        {isClockAnchored ? 'Window closed — this task will auto-fail' : 'Response window closed — waiting for auto-review'}
+                      <div className="mt-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
+                        <XCircle size={15} className="shrink-0" />
+                        <span>Submission time has expired ({deadlineMs !== null ? timeLabel(deadlineMs) : 'window closed'}). If you missed this with a valid reason, ask your employer to reopen the task.</span>
                       </div>
                     )}
 
@@ -250,8 +307,9 @@ export default function WorkerPipeline() {
                       </div>
                     )}
                     {status === 'failed' && (
-                      <div className="text-[10px] font-bold text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded inline-block mt-2">
-                        {completion?.rejectionReason || 'Missed the response window'}
+                      <div className="mt-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
+                        <XCircle size={15} className="shrink-0" />
+                        <span>{completion?.rejectionReason || 'Missed the response window. Ask your employer to reopen this task.'}</span>
                       </div>
                     )}
                   </div>

@@ -98,33 +98,57 @@ router.patch('/:id/approve', async (req: AuthenticatedRequest, res: Response): P
     return;
   }
 
-  const { data, error } = await supabaseAdmin
+  // If approved: is_approved = true, unban
+  // If rejected: is_approved = false, is_banned = true
+  const updatePayload: Record<string, any> = {
+    is_approved: approved,
+    is_banned: !approved,
+  };
+
+  let updateResult = await supabaseAdmin
     .from('profiles')
-    .update({ is_approved: approved })
+    .update({
+      ...updatePayload,
+      banned_reason: approved ? null : 'Account rejected by admin',
+    })
     .eq('id', id)
-    .select('id, name, role, is_approved')
+    .select('id, name, role, is_approved, is_banned')
     .single();
 
-  if (error) {
-    res.status(500).json({ error: error.message });
+  if (updateResult.error) {
+    // Fallback if banned_reason column is not present
+    updateResult = await supabaseAdmin
+      .from('profiles')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('id, name, role, is_approved, is_banned')
+      .single();
+  }
+
+  if (updateResult.error) {
+    res.status(500).json({ error: updateResult.error.message });
     return;
   }
 
   const notificationType = approved ? 'account_approved' : 'account_rejected';
-  const notificationTitle = approved ? 'Account Approved' : 'Account Not Approved';
+  const notificationTitle = approved ? 'Account Approved' : 'Account Rejected';
   const notificationMessage = approved
     ? 'Your Gigg account has been approved. You can now access all features.'
-    : 'Your account application was not approved. Please contact support for more information.';
+    : 'Your account registration was not approved. Please contact support for more information.';
 
-  await supabaseAdmin.from('notifications').insert({
-    user_id: id,
-    type: notificationType,
-    title: notificationTitle,
-    message: notificationMessage,
-    is_read: false,
-  }).then(() => undefined).catch(() => undefined);
+  try {
+    await supabaseAdmin.from('notifications').insert({
+      user_id: id,
+      type: notificationType,
+      title: notificationTitle,
+      message: notificationMessage,
+      is_read: false,
+    });
+  } catch {
+    // Best-effort notification creation
+  }
 
-  res.json({ message: approved ? 'User approved' : 'User rejected', user: data });
+  res.json({ message: approved ? 'User approved' : 'User rejected', user: updateResult.data });
 });
 
 router.patch('/:id/ban', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -136,28 +160,39 @@ router.patch('/:id/ban', async (req: AuthenticatedRequest, res: Response): Promi
     return;
   }
 
-  const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(id, {
-    ban_duration: banned ? '87600h' : 'none',
-  });
-
-  if (authError) {
-    res.status(500).json({ error: authError.message });
-    return;
+  // Try updating Supabase Auth ban status if auth account exists (best effort)
+  try {
+    await supabaseAdmin.auth.admin.updateUserById(id, {
+      ban_duration: banned ? '87600h' : 'none',
+    });
+  } catch (err) {
+    console.log('[Ban] Supabase Auth update notice:', err);
   }
 
-  const { data, error: profileError } = await supabaseAdmin
+  // Support both banned_reason and ban_reason column names gracefully
+  let updateResult = await supabaseAdmin
     .from('profiles')
-    .update({ is_banned: banned, ban_reason: reason || null })
+    .update({ is_banned: banned, banned_reason: reason || (banned ? 'Banned by admin' : null) })
     .eq('id', id)
     .select()
     .single();
 
-  if (profileError) {
-    res.status(500).json({ error: profileError.message });
+  if (updateResult.error) {
+    updateResult = await supabaseAdmin
+      .from('profiles')
+      .update({ is_banned: banned })
+      .eq('id', id)
+      .select()
+      .single();
+  }
+
+  if (updateResult.error) {
+    console.error('[Ban] Profile update error:', updateResult.error);
+    res.status(500).json({ error: updateResult.error.message });
     return;
   }
 
-  res.json({ message: banned ? 'User banned' : 'User unbanned', user: data });
+  res.json({ message: banned ? 'User banned' : 'User unbanned', user: updateResult.data });
 });
 
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {

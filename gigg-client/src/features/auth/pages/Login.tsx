@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+// @refresh reset
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { Phone, ArrowLeft, User, Briefcase, ArrowRight, CheckCircle } from 'lucide-react';
+import { Phone, ArrowLeft, User, Briefcase, ArrowRight, CheckCircle, LogIn, UserPlus } from 'lucide-react';
 import { useUIStore } from '../../../store/uiStore';
 import { useAuthStore } from '../../../store/authStore';
+import OnboardingQuestions, { OnboardingData } from '../components/OnboardingQuestions';
 
-// ── Role Selection Modal ──────────────────────────────────────
+// ── Role Selection Modal ("Login As") ─────────────────────────
 function RoleSelector({ onSelect }: { onSelect: (role: 'worker' | 'employer') => void }) {
   return (
     <motion.div
@@ -93,14 +95,163 @@ function RoleSelector({ onSelect }: { onSelect: (role: 'worker' | 'employer') =>
   );
 }
 
+// ── Action Choice Modal ("Sign In" vs "Create Account") ───────
+function ActionChoiceModal({
+  role,
+  onBack,
+  onChooseSignIn,
+  onChooseCreateAccount,
+}: {
+  role: 'worker' | 'employer';
+  onBack: () => void;
+  onChooseSignIn: () => void;
+  onChooseCreateAccount: () => void;
+}) {
+  const isEmployer = role === 'employer';
+  const accentColor = isEmployer ? '#2563EB' : '#22C55E';
+  const accentRgb = isEmployer ? '37,99,235' : '34,197,94';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center px-6"
+      style={{ backgroundColor: 'rgba(1,19,59,0.95)' }}
+    >
+      <div className="absolute top-0 right-0 w-80 h-80 rounded-full opacity-10 pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${accentColor}, transparent)`, transform: 'translate(40%, -40%)' }} />
+      <div className="absolute bottom-0 left-0 w-60 h-60 rounded-full opacity-10 pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${accentColor}, transparent)`, transform: 'translate(-40%, 40%)' }} />
+
+      <motion.div
+        initial={{ scale: 0.85, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', duration: 0.5 }}
+        className="w-full max-w-sm relative z-10"
+      >
+        {/* Header & Back */}
+        <div className="flex items-center justify-between mb-8">
+          <button
+            onClick={onBack}
+            className="w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:bg-white/20 active:scale-95"
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }}
+          >
+            <ArrowLeft size={18} color="#FFFFFF" />
+          </button>
+          <div className="px-3 py-1 rounded-full text-xs font-black tracking-widest uppercase flex items-center gap-1.5"
+            style={{
+              backgroundColor: isEmployer ? 'rgba(37,99,235,0.15)' : 'rgba(34,197,94,0.15)',
+              border: `1px solid ${accentColor}`,
+              color: accentColor
+            }}>
+            {isEmployer ? <Briefcase size={13} /> : <User size={13} />}
+            <span>{isEmployer ? 'Employer' : 'Worker'}</span>
+          </div>
+        </div>
+
+        {/* Title */}
+        <div className="flex flex-col items-center mb-8 text-center">
+          <img src="/logo.png" alt="Giggers" className="w-16 h-16 rounded-2xl mb-3" />
+          <h2 className="text-2xl font-black text-white tracking-tight">How would you like to proceed?</h2>
+          <p className="text-white/50 text-xs font-medium mt-1">
+            Choose Sign In for existing accounts or Create Account for new users
+          </p>
+        </div>
+
+        {/* Action Cards */}
+        <div className="flex flex-col gap-4">
+          {/* Sign In Button */}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={onChooseSignIn}
+            className="w-full p-5 rounded-2xl text-left flex items-center gap-4 transition-all"
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              border: '1.5px solid rgba(255,255,255,0.15)',
+            }}
+          >
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: accentColor }}>
+              <LogIn size={22} color="#FFFFFF" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-base font-extrabold text-white">Sign In</h3>
+              <p className="text-white/50 text-xs font-medium mt-0.5">Existing account? Quick log in</p>
+            </div>
+            <ArrowRight size={18} color="rgba(255,255,255,0.6)" />
+          </motion.button>
+
+          {/* Create Account Button */}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={onChooseCreateAccount}
+            className="w-full p-5 rounded-2xl text-left flex items-center gap-4 transition-all relative overflow-hidden"
+            style={{
+              backgroundColor: `rgba(${accentRgb}, 0.12)`,
+              border: `2px solid ${accentColor}`,
+              boxShadow: `0 4px 20px rgba(${accentRgb}, 0.2)`
+            }}
+          >
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: accentColor }}>
+              <UserPlus size={22} color="#FFFFFF" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-base font-extrabold text-white">Create Account</h3>
+              <p className="text-white/50 text-xs font-medium mt-0.5">New to Giggers? 3-question setup</p>
+            </div>
+            <ArrowRight size={18} color={accentColor} />
+          </motion.button>
+        </div>
+
+        {/* Trust Footer */}
+        <div className="mt-8 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-white/30 text-xs font-medium">
+            <CheckCircle size={12} />
+            <span>Secure. Verified. Reliable.</span>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── Main Login Component ──────────────────────────────────────
 export default function Login() {
   const navigate = useNavigate();
   const [phone, setPhone] = useState('');
+  // Always start from step 1 (role selection) — never persist across mounts
   const [role, setRole] = useState<'worker' | 'employer' | null>(null);
+  const [authAction, setAuthAction] = useState<'login' | 'register' | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
   const { addToast } = useUIStore();
-  const { sendOtp } = useAuthStore();
+  const { sendOtp, isAuthenticated, hasHydrated, refreshUser } = useAuthStore();
   const [sending, setSending] = useState(false);
+
+  // On every mount, clear any stale login-step state and refresh user status
+  useEffect(() => {
+    setRole(null);
+    setAuthAction(null);
+    setShowOnboarding(false);
+    setPhone('');
+    if (isAuthenticated) {
+      refreshUser();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // <- intentionally empty: runs ONCE on mount
+
+  // If user is already logged in, send them home
+  useEffect(() => {
+    if (hasHydrated && isAuthenticated) {
+      refreshUser();
+      navigate('/home', { replace: true });
+    }
+  }, [hasHydrated, isAuthenticated, navigate, refreshUser]);
+
 
   const isEmployer = role === 'employer';
   const accentColor = isEmployer ? '#2563EB' : '#22C55E';
@@ -126,16 +277,39 @@ export default function Login() {
     }
   };
 
-  // ── Role Selection Popup ──────────────────
+  const handleOnboardingComplete = (data: OnboardingData) => {
+    setShowOnboarding(false);
+    navigate(`/register?role=${role}&status=${encodeURIComponent(data.status || '')}&commitment=${encodeURIComponent(data.commitment || '')}`);
+  };
+
+  // ── Step 1: Role Selection Popup ("Login As") ──────────────────
   if (!role) {
     return (
       <AnimatePresence>
-        <RoleSelector onSelect={(r) => setRole(r)} />
+        <RoleSelector onSelect={(r) => {
+          setRole(r);
+          setAuthAction('login');
+          setShowOnboarding(false);
+        }} />
       </AnimatePresence>
     );
   }
 
-  // ── Login Form (after role selected) ──────────────────
+  // ── Step 2: Onboarding Questions (Only for Create Account) ──────
+  if (authAction === 'register' && showOnboarding) {
+    return (
+      <OnboardingQuestions
+        role={role}
+        onBack={() => {
+          setAuthAction('login');
+          setShowOnboarding(false);
+        }}
+        onComplete={handleOnboardingComplete}
+      />
+    );
+  }
+
+  // ── Step 3: Login Phone Form (Directly for Sign In) ────────────
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#F8FAFC' }}>
 
@@ -147,7 +321,10 @@ export default function Login() {
         <div className="px-6 pt-10 pb-16">
           {/* Back button */}
           <button
-            onClick={() => setRole(null)}
+            onClick={() => {
+              setRole(null);
+              setAuthAction(null);
+            }}
             className="w-9 h-9 rounded-xl flex items-center justify-center mb-6"
             style={{ backgroundColor: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }}
           >
@@ -248,10 +425,10 @@ export default function Login() {
             style={{ border: '1.5px solid #E2E8F0', backgroundColor: '#FFFFFF', color: '#334155' }}
           >
             <svg width="18" height="18" viewBox="0 0 48 48">
-              <path fill="#FFC107" d="M43.6 20.2H42V20H24v8h11.3C33.9 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.5-.4-3.8z"/>
-              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.8 18.8 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
-              <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
-              <path fill="#1976D2" d="M43.6 20.2H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C36.7 39.4 44 34 44 24c0-1.3-.1-2.5-.4-3.8z"/>
+              <path fill="#FFC107" d="M43.6 20.2H42V20H24v8h11.3C33.9 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.5-.4-3.8z" />
+              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.8 18.8 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+              <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+              <path fill="#1976D2" d="M43.6 20.2H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C36.7 39.4 44 34 44 24c0-1.3-.1-2.5-.4-3.8z" />
             </svg>
             Continue with Google
           </button>
@@ -260,11 +437,14 @@ export default function Login() {
           <p className="text-center text-sm font-medium mt-1" style={{ color: '#64748B' }}>
             Don't have an account?{' '}
             <button
-              onClick={() => navigate('/register')}
+              onClick={() => {
+                setAuthAction('register');
+                setShowOnboarding(true);
+              }}
               className="font-extrabold"
               style={{ color: accentColor }}
             >
-              Sign Up
+              Create Account
             </button>
           </p>
         </div>

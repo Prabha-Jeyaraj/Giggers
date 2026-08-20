@@ -5,10 +5,8 @@ import { Home, Briefcase, MessageSquare, Wallet, User, Bell, Plus, LayoutDashboa
 import { clsx } from 'clsx';
 import { useAuthStore } from '../../store/authStore';
 import { useNotificationStore } from '../../store/notificationStore';
+import { useChatStore } from '../../store/chatStore';
 
-// ============================================================
-// UNIFIED BOTTOM NAV
-// ============================================================
 export const WORKER_TABS = [
   { path: '/home',     icon: Home,          label: 'Home' },
   { path: '/jobs',     icon: Briefcase,     label: 'My Jobs' },
@@ -27,9 +25,13 @@ export const EMPLOYER_TABS = [
 ];
 
 export const BottomNav: React.FC = () => {
-  const { unreadCount } = useNotificationStore();
+  const { unreadCount: notifUnread } = useNotificationStore();
+  const { threads } = useChatStore();
   const { user } = useAuthStore();
   const location = useLocation();
+
+  const chatUnreadCount = threads.reduce((sum, t) => sum + (t.unreadCount > 0 ? 1 : 0), 0);
+  const totalChatBadge = chatUnreadCount > 0 ? chatUnreadCount : notifUnread;
 
   const tabs = user?.role === 'employer' ? EMPLOYER_TABS : WORKER_TABS;
 
@@ -52,9 +54,9 @@ export const BottomNav: React.FC = () => {
                         strokeWidth={active ? 2.5 : 2}
                         className={clsx('transition-colors duration-200', active ? (user?.role === 'employer' ? 'text-blue-600' : 'text-green-600') : 'text-slate-400 dark:text-slate-500')}
                       />
-                      {tab.path === '/chat' && unreadCount > 0 && (
-                        <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white">
-                          {unreadCount > 9 ? '9+' : unreadCount}
+                      {tab.path === '/chat' && totalChatBadge > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 bg-emerald-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white shadow-sm">
+                          {totalChatBadge > 9 ? '9+' : totalChatBadge}
                         </span>
                       )}
                     </div>

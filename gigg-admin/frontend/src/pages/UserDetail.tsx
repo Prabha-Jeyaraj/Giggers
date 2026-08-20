@@ -273,7 +273,7 @@ const UserDetail: React.FC = () => {
 
               {/* Actions */}
               <div className="flex items-center gap-3 flex-wrap">
-                {!profile.is_approved && profile.kyc_status !== 'submitted' && (
+                {!profile.is_approved && !profile.is_banned && profile.kyc_status !== 'submitted' && (
                   <>
                     <button onClick={() => handleApproveAccount(true)} className="btn-success py-2 px-4">
                       <CheckCircle size={14} /> Approve Account
@@ -282,6 +282,11 @@ const UserDetail: React.FC = () => {
                       <XCircle size={14} /> Reject Account
                     </button>
                   </>
+                )}
+                {profile.is_banned && (
+                  <button onClick={() => handleApproveAccount(true)} className="btn-success py-2 px-4">
+                    <CheckCircle size={14} /> Approve & Unban
+                  </button>
                 )}
                 {profile.is_approved && (
                   <button
@@ -292,7 +297,7 @@ const UserDetail: React.FC = () => {
                     {profile.is_verified ? 'Revoke KYC' : 'Verify KYC'}
                   </button>
                 )}
-                <button onClick={handleBan} className="btn-danger py-2 px-4">
+                <button onClick={handleBan} className={`btn-danger py-2 px-4 ${profile.is_banned ? 'bg-amber-600 hover:bg-amber-700' : ''}`}>
                   <UserX size={14} />
                   {profile.is_banned ? 'Unban User' : 'Ban User'}
                 </button>

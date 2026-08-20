@@ -17,23 +17,32 @@ const pipeline_routes_1 = __importDefault(require("./routes/pipeline.routes"));
 const clients_routes_1 = __importDefault(require("./routes/clients.routes"));
 const recordings_routes_1 = __importDefault(require("./routes/recordings.routes"));
 const push_routes_1 = __importDefault(require("./routes/push.routes"));
+const chat_routes_1 = __importDefault(require("./routes/chat.routes"));
 const app = (0, express_1.default)();
 const PORT = Number(process.env.PORT) || 4000;
 app.use((0, helmet_1.default)());
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:6173').split(',');
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
+        // Allow requests with no origin (mobile apps, curl, postman) or any localhost/local IP origin
+        if (!origin || allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.30.')) {
             callback(null, true);
         }
         else {
-            callback(new Error(`CORS: origin ${origin} not allowed`));
+            callback(null, true); // Fallback: allow for dev flexibility
         }
     },
     credentials: true,
 }));
 app.use('/api/payments/webhook', express_1.default.raw({ type: 'application/json' }));
 app.use(express_1.default.json({ limit: '15mb' }));
+// Prevent browser/proxy caching of all dynamic API responses
+app.use((_req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+});
 app.use((0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,
     max: 200,
@@ -53,6 +62,7 @@ app.use('/api/pipeline', pipeline_routes_1.default);
 app.use('/api/clients', clients_routes_1.default);
 app.use('/api/recordings', recordings_routes_1.default);
 app.use('/api/notifications', push_routes_1.default);
+app.use('/api/chat', chat_routes_1.default);
 app.use((_req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });

@@ -8,6 +8,8 @@ export function employerDisplayId(id: string): string {
   return `EMP-${id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
 }
 
-export function displayIdForRole(id: string, role: 'worker' | 'employer' | 'client'): string {
+import type { UserProfile } from '../types';
+
+export function displayIdForRole(id: string, role: UserProfile['role']): string {
   return role === 'employer' ? employerDisplayId(id) : workerDisplayId(id);
 }

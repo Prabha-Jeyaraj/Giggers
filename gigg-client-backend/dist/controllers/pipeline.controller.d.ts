@@ -12,4 +12,5 @@ export declare function reviewCompletion(req: AuthenticatedRequest, res: Respons
 export declare function employerForceComplete(req: AuthenticatedRequest, res: Response): Promise<void>;
 export declare function employerReopenTask(req: AuthenticatedRequest, res: Response): Promise<void>;
 export declare function getCompletionImageUrl(req: AuthenticatedRequest, res: Response): Promise<void>;
+export declare function getPublicPipeline(req: any, res: any): Promise<void>;
 //# sourceMappingURL=pipeline.controller.d.ts.map

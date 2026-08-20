@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AppHeader } from '../../../components/layout/Navigation';
-import { Button, Input, Modal, Avatar, Chip } from '../../../components/ui';
+import { Button, Modal, Avatar, Chip } from '../../../components/ui';
 import { useJobStore } from '../../../store/jobStore';
 import { useAuthStore } from '../../../store/authStore';
-import { useClientStore } from '../../../store/clientStore';
 import { useUIStore } from '../../../store/uiStore';
-import { CheckCircle2, UserCircle2, ChevronRight, Share2, X, Info, Phone, MapPin, Briefcase, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, UserCircle2, ChevronRight, Share2, X, Info, Phone, MapPin, Briefcase, ShieldCheck, ShieldAlert, Coins } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Badge } from '../../../components/ui';
+import { NegotiatedPayModal } from '../components/NegotiatedPayModal';
 import type { Application } from '../../../types';
 
 export default function AssignWork() {
@@ -17,19 +17,15 @@ export default function AssignWork() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { myJobs, jobCandidates, fetchJobCandidates, hireWorker, rejectWorker, isLoading } = useJobStore();
-  const { inviteClient } = useClientStore();
   const { addToast } = useUIStore();
 
   const [activeTab, setActiveTab] = useState<'pending' | 'confirmed'>('pending');
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [isHiring, setIsHiring] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [clientName, setClientName] = useState('');
-  const [clientPhone, setClientPhone] = useState('');
-  const [inviteLink, setInviteLink] = useState('');
-  const [isInviting, setIsInviting] = useState(false);
+
   const [profileApp, setProfileApp] = useState<Application | null>(null);
+  const [payModalApp, setPayModalApp] = useState<Application | null>(null);
 
   const job = myJobs.find(j => j.id === id);
 
@@ -75,24 +71,15 @@ export default function AssignWork() {
     setActiveTab('confirmed');
   };
 
-  const handleInviteClient = async () => {
-    if (!clientName.trim() || !/^[6-9]\d{9}$/.test(clientPhone.replace(/\s/g, ''))) {
-      addToast('Please enter a valid name and 10-digit phone number', 'error');
-      return;
-    }
-    setIsInviting(true);
+  const handleShareAllWorkersPipeline = async () => {
+    const token = job.pipelineShareToken || (job as any).pipeline_share_token || job.id;
+    const url = `${window.location.origin}/pipeline/share/${token}`;
     try {
-      const token = await inviteClient(job.id, clientName.trim(), clientPhone.replace(/\s/g, ''));
-      setInviteLink(`${window.location.origin}/client/invite/${token}`);
-    } catch (err: any) {
-      addToast(err?.message || 'Failed to invite client', 'error');
-    } finally {
-      setIsInviting(false);
+      await navigator.clipboard.writeText(url);
+      addToast('All workers pipeline share link copied to clipboard!', 'success');
+    } catch {
+      addToast(`Share link: ${url}`, 'info');
     }
-  };
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(inviteLink).then(() => addToast('Link copied!', 'success'));
   };
 
   const handleReject = async (applicationId: string) => {
@@ -114,29 +101,11 @@ export default function AssignWork() {
         showBack
         onBack={() => navigate(-1)}
         rightAction={
-          <button onClick={() => setShowInviteModal(true)} className="p-2 text-slate-500 hover:text-primary-600 transition-colors">
+          <button onClick={handleShareAllWorkersPipeline} title="Share All Workers' Pipeline" className="p-2 text-slate-500 hover:text-primary-600 transition-colors">
             <Share2 size={20} />
           </button>
         }
       />
-
-      <Modal open={showInviteModal} onClose={() => { setShowInviteModal(false); setInviteLink(''); setClientName(''); setClientPhone(''); }} title="Share with Client">
-        <div className="flex flex-col gap-4 pb-4">
-          {!inviteLink ? (
-            <>
-              <Input label="Client Name" placeholder="e.g. Priya Sharma" value={clientName} onChange={(e) => setClientName(e.target.value)} />
-              <Input label="Client Phone" placeholder="10-digit mobile number" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} />
-              <Button fullWidth onClick={handleInviteClient} loading={isInviting}>Generate Invite Link</Button>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-slate-500 font-medium">Share this link with your client — it opens directly to a live view of this job's pipeline, no login needed.</p>
-              <div className="bg-slate-50 dark:bg-dark-700 p-3 rounded-xl text-xs font-mono break-all">{inviteLink}</div>
-              <Button fullWidth onClick={handleCopyLink}>Copy Link</Button>
-            </>
-          )}
-        </div>
-      </Modal>
 
       {/* Tabs */}
       <div className="px-5 pt-4">
@@ -214,10 +183,29 @@ export default function AssignWork() {
                     </div>
                   )}
                   
-                  <div className="flex-1">
-                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">{app.workerName}</h4>
-                    <p className="text-xs font-semibold text-slate-500">⭐ {app.workerRating.toFixed(1)} • ID: {app.workerId.slice(0, 6)}</p>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{app.workerName}</h4>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-slate-500">⭐ {app.workerRating.toFixed(1)}</span>
+                      <span className="text-slate-300 dark:text-dark-600">•</span>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        ₹{app.negotiatedPay != null ? app.negotiatedPay : job.payPerWorker}
+                      </span>
+                      {app.negotiatedPay != null && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                          Negotiated
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPayModalApp(app); }}
+                    title="Set custom pay"
+                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                  >
+                    <Coins size={16} />
+                  </button>
 
                   <button
                     onClick={(e) => { e.stopPropagation(); setProfileApp(app); }}
@@ -258,16 +246,34 @@ export default function AssignWork() {
                     </div>
                   )}
 
-                  <div className="flex-1">
-                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">{app.workerName}</h4>
-                    {app.status === 'hired' ? (
-                      <Badge variant="warning">Awaiting Response</Badge>
-                    ) : (
-                      <Badge variant="success">Confirmed</Badge>
-                    )}
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{app.workerName}</h4>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {app.status === 'hired' ? (
+                        <Badge variant="warning">Awaiting Response</Badge>
+                      ) : (
+                        <Badge variant="success">Confirmed</Badge>
+                      )}
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        ₹{app.negotiatedPay != null ? app.negotiatedPay : job.payPerWorker}
+                      </span>
+                      {app.negotiatedPay != null && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                          Negotiated
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <ChevronRight size={20} className="text-slate-400" />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPayModalApp(app); }}
+                    title="Update negotiated pay"
+                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors flex-shrink-0"
+                  >
+                    <Coins size={16} />
+                  </button>
+
+                  <ChevronRight size={20} className="text-slate-400 flex-shrink-0" />
                 </div>
               ))
             )}
@@ -408,6 +414,21 @@ export default function AssignWork() {
           </div>
         )}
       </Modal>
+
+      {/* Negotiated Pay Override Modal */}
+      {payModalApp && (
+        <NegotiatedPayModal
+          open={!!payModalApp}
+          onClose={() => setPayModalApp(null)}
+          applicationId={payModalApp.id}
+          workerName={payModalApp.workerName}
+          defaultPay={job.payPerWorker}
+          currentNegotiatedPay={payModalApp.negotiatedPay}
+          onSuccess={() => {
+            if (id) fetchJobCandidates(id);
+          }}
+        />
+      )}
     </div>
   );
 }

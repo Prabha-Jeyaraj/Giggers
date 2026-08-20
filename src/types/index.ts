@@ -104,6 +104,9 @@ export interface Application {
   status: ApplicationStatus;
   appliedAt: string;
   updatedAt: string;
+  negotiatedPay?: number | null;
+  paid?: boolean;
+  paidAt?: string;
 }
 
 export interface Work {

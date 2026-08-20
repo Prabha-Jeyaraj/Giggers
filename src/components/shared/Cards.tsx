@@ -245,7 +245,16 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
             <span className="flex items-center gap-1"><MapPin size={11} />{application.job.location}</span>
             <span className="flex items-center gap-1"><Clock size={11} />{application.job.date}</span>
           </div>
-          <p className="text-sm font-black text-primary-600 dark:text-primary-400 mt-2">₹{application.job.payPerWorker}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-sm font-black text-primary-600 dark:text-primary-400">
+              ₹{application.negotiatedPay != null ? application.negotiatedPay : application.job.payPerWorker}
+            </p>
+            {application.negotiatedPay != null && (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                Negotiated Rate
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>

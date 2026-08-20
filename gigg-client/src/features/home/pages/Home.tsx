@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ import { useUIStore } from '../../../store/uiStore';
 import { HomeHeader } from '../../../components/layout/Navigation';
 import { JobCard } from '../../../components/shared/Cards';
 import { Shield, AlertCircle } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
 
 export default function Home() {
   const { user } = useAuthStore();
@@ -16,6 +17,8 @@ export default function Home() {
   const { wallet, fetchWallet } = useWalletStore();
   const { addToast } = useUIStore();
   const navigate = useNavigate();
+  const [actualHiredCount, setActualHiredCount] = React.useState(0);
+
   // Real category counts from Supabase
   const cateringCount = jobs.filter(j => j.category === 'Catering').length;
   const pamphletsCount = jobs.filter(j => j.category === 'Pamphlet Dist.').length;
@@ -24,6 +27,12 @@ export default function Home() {
     fetchJobs();
     if (user && user.role === 'employer') {
       fetchPostedJobs(user.id);
+      // Fetch actual hired count from applications (workers_hired column may be stale)
+      supabase
+        .from('applications')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['hired', 'confirmed', 'completed'])
+        .then(({ count }) => setActualHiredCount(count ?? 0));
     }
     if (user && user.role === 'worker') {
       fetchAppliedJobs(user.id);
@@ -33,13 +42,11 @@ export default function Home() {
 
   if (!user) return null;
 
-  // Real Employer Metrics
+  // Real Employer Metrics — use actualHiredCount from DB not stale workers_hired column
   const jobsPostedCount = myJobs.length;
-  // A simplistic way to get all applications for myJobs: since jobCandidates are fetched per job, we might not have all.
-  // We'll calculate based on workersHired for a simple approx, or if you had all apps it would be better.
   const inProgressCount = myJobs.filter(j => j.status === 'active').length;
   const completedCount = myJobs.filter(j => j.status === 'completed').length;
-  const totalApplications = myJobs.reduce((sum, j) => sum + (j.workersHired || 0), 0); // approx if we don't fetch all candidates
+  const totalApplications = actualHiredCount;
 
   // Real Worker Metrics
   const walletBalance = wallet?.currentBalance ?? 0;
@@ -184,32 +191,39 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col gap-3">
-              {[
-                { title: 'Catering Helper', date: 'Today • 8:00 AM - 4:00 PM', location: 'Chennai', pay: '₹800', icon: '👨‍🍳' },
-                { title: 'Event Staff', date: 'Tomorrow • 6:00 PM - 12:00 AM', location: 'Chennai', pay: '₹700', icon: '🍷' },
-                { title: 'Welcome Desk Staff', date: '20 May • 9:00 AM - 5:00 PM', location: 'Chennai', pay: '₹750', icon: '📋' }
-              ].map((job, idx) => (
-                <motion.div key={idx} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.1 }}
-                  className="bg-white dark:bg-dark-800 border border-slate-100 dark:border-dark-600 rounded-2xl p-4 flex items-center gap-4 shadow-sm cursor-pointer"
-                  onClick={() => navigate('/jobs')}
-                >
-                  <div className="w-12 h-12 rounded-xl bg-slate-50 dark:bg-dark-700 flex items-center justify-center text-xl flex-shrink-0">
-                    {job.icon}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mb-0.5">{job.title}</h4>
-                    <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date}</p>
-                    <p className="text-[10px] font-semibold text-slate-500 flex items-center gap-1">
-                      📍 {job.location}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-black text-green-600">
-                      {job.pay}
-                    </span>
-                  </div>
-                </motion.div>
-              ))}
+              {jobs.length === 0 ? (
+                <div className="bg-white dark:bg-dark-800 border border-slate-100 dark:border-dark-600 rounded-2xl p-6 text-center">
+                  <p className="text-sm font-semibold text-slate-500 mb-1">No active jobs posted yet</p>
+                  <p className="text-xs text-slate-400">New gigs will appear here as soon as employers post them.</p>
+                </div>
+              ) : (
+                jobs.slice(0, 5).map((job, idx) => (
+                  <motion.div
+                    key={job.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.1 }}
+                    className="bg-white dark:bg-dark-800 border border-slate-100 dark:border-dark-600 rounded-2xl p-4 flex items-center gap-4 shadow-sm cursor-pointer hover:border-green-500/30 transition-all"
+                    onClick={() => navigate(`/jobs/${job.id}`)}
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-slate-50 dark:bg-dark-700 flex items-center justify-center text-xl flex-shrink-0">
+                      {job.categoryEmoji || '💼'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mb-0.5 truncate">{job.title}</h4>
+                      <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{job.date} • {job.reportingTime}</p>
+                      <p className="text-[10px] font-semibold text-slate-500 flex items-center gap-1 truncate">
+                        📍 {job.location}
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-sm font-black text-green-600">
+                        ₹{job.payPerWorker}
+                      </span>
+                    </div>
+                  </motion.div>
+                ))
+              )}
             </div>
           </div>
 

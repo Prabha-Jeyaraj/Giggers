@@ -97,13 +97,15 @@ router.patch('/:id/approve', async (req: AuthenticatedRequest, res: Response): P
     return;
   }
 
-  await supabaseAdmin.from('notifications').insert({
-    user_id: kyc.user_id,
-    type: 'kyc_approved',
-    title: 'KYC Approved',
-    message: 'Your KYC is approved. You can now apply for jobs or post jobs.',
-    is_read: false,
-  }).then(() => undefined).catch(() => undefined);
+  try {
+    await supabaseAdmin.from('notifications').insert({
+      user_id: kyc.user_id,
+      type: 'kyc_approved',
+      title: 'KYC Approved',
+      message: 'Your KYC is approved. You can now apply for jobs or post jobs.',
+      is_read: false,
+    });
+  } catch {}
 
   res.json({ message: 'KYC approved and user activated' });
 });
@@ -151,13 +153,15 @@ router.patch('/:id/reject', async (req: AuthenticatedRequest, res: Response): Pr
     })
     .eq('id', kyc.user_id);
 
-  await supabaseAdmin.from('notifications').insert({
-    user_id: kyc.user_id,
-    type: 'kyc_rejected',
-    title: 'KYC Needs Attention',
-    message: reason || 'Your KYC was rejected. Please review and resubmit your documents.',
-    is_read: false,
-  }).then(() => undefined).catch(() => undefined);
+  try {
+    await supabaseAdmin.from('notifications').insert({
+      user_id: kyc.user_id,
+      type: 'kyc_rejected',
+      title: 'KYC Needs Attention',
+      message: reason || 'Your KYC was rejected. Please review and resubmit your documents.',
+      is_read: false,
+    });
+  } catch {}
 
   res.json({ message: 'KYC rejected' });
 });

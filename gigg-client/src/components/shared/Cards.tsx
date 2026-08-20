@@ -14,15 +14,62 @@ interface JobCardProps {
   onSave?: () => void;
   saved?: boolean;
   variant?: 'list' | 'grid' | 'featured';
+  userApplicationStatus?: string;
+  /** Pass true when rendering inside employer's own Postings tab */
+  isEmployerOwn?: boolean;
 }
 
-export const JobCard: React.FC<JobCardProps> = ({ job, onClick, onSave, saved, variant = 'list' }) => {
-  const statusColor = {
-    active:    { variant: 'success' as const, label: 'Hiring' },
-    draft:     { variant: 'gray'    as const, label: 'Draft' },
-    completed: { variant: 'primary' as const, label: 'Done' },
-    cancelled: { variant: 'danger'  as const, label: 'Cancelled' },
-  }[job.status];
+export function getPersonalizedJobBadge(
+  jobStatus: string,
+  workersHired: number,
+  workersNeeded: number,
+  userApplicationStatus?: string,
+  isEmployerOwn?: boolean
+): { variant: 'success' | 'warning' | 'primary' | 'danger' | 'gray'; label: string } {
+  // Terminal states are the same for everyone
+  if (jobStatus === 'completed') {
+    return { variant: 'primary', label: 'Completed' };
+  }
+  if (jobStatus === 'cancelled') {
+    return { variant: 'danger', label: 'Cancelled' };
+  }
+  if (jobStatus === 'draft') {
+    return { variant: 'gray', label: 'Draft' };
+  }
+
+  // ── Employer's own posting view ──────────────────────────────
+  if (isEmployerOwn) {
+    const isFull = workersHired >= workersNeeded;
+    if (isFull) return { variant: 'success', label: 'Hired' };
+    return { variant: 'success', label: 'Hiring' };
+  }
+
+  // ── Worker / public view ─────────────────────────────────────
+  if (userApplicationStatus === 'hired' || userApplicationStatus === 'confirmed') {
+    return { variant: 'success', label: 'Hired' };
+  }
+
+  const isFull = workersHired >= workersNeeded;
+
+  if (isFull) {
+    if (userApplicationStatus === 'applied' || userApplicationStatus === 'pending') {
+      return { variant: 'warning', label: 'Not Selected' };
+    }
+    if (userApplicationStatus === 'rejected') {
+      return { variant: 'danger', label: 'Not Selected' };
+    }
+    return { variant: 'warning', label: 'Applications Closed' };
+  }
+
+  if (userApplicationStatus === 'applied' || userApplicationStatus === 'pending') {
+    return { variant: 'primary', label: 'Applied' };
+  }
+
+  return { variant: 'success', label: 'Hiring' };
+}
+
+export const JobCard: React.FC<JobCardProps> = ({ job, onClick, onSave, saved, variant = 'list', userApplicationStatus, isEmployerOwn }) => {
+  const statusColor = getPersonalizedJobBadge(job.status, job.workersHired, job.workersNeeded, userApplicationStatus, isEmployerOwn);
 
   if (variant === 'featured') {
     return (
@@ -247,7 +294,16 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
             <span className="flex items-center gap-1"><MapPin size={11} />{application.job.location}</span>
             <span className="flex items-center gap-1"><Clock size={11} />{application.job.date}</span>
           </div>
-          <p className="text-sm font-black text-primary-600 dark:text-primary-400 mt-2">₹{application.job.payPerWorker}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-sm font-black text-primary-600 dark:text-primary-400">
+              ₹{application.negotiatedPay != null ? application.negotiatedPay : application.job.payPerWorker}
+            </p>
+            {application.negotiatedPay != null && (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                Negotiated Rate
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>

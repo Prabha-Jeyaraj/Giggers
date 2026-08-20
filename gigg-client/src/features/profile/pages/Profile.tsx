@@ -12,6 +12,7 @@ import { api } from '../../../lib/api';
 import { useUIStore } from '../../../store/uiStore';
 import { Avatar, Card, Badge, Button, Input, Toggle, Select, Modal } from '../../../components/ui';
 import { displayIdForRole } from '../../../lib/displayId';
+import { supabase } from '../../../lib/supabase';
 
 // ─── Edit Profile Modal ──────────────────────────────────────
 function EditProfileModal({ user, open, onClose, onSave }: any) {
@@ -668,7 +669,101 @@ export default function Profile() {
 
   const [modal, setModal] = useState<null | 'edit' | 'skills' | 'settings' | 'help' | 'verify'>(null);
 
-  // KYC is shown inline on this page — no redirect needed
+  // Live profile stats states (Items 6, 7, 8, 10)
+  const [liveRating, setLiveRating] = useState<number | null>(null);
+  const [jobsPostedCount, setJobsPostedCount] = useState<number | null>(null);
+  const [gigsDone, setGigsDone] = useState<number | null>(null);
+  const [totalEarned, setTotalEarned] = useState<number | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    if (!user) return false;
+    try {
+      return localStorage.getItem(`kyc_banner_dismissed_${user.id}`) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    (async () => {
+      // Item 8: Check kyc_notification_seen from DB profile
+      try {
+        const { data: profData } = await supabase
+          .from('profiles')
+          .select('kyc_notification_seen')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (profData?.kyc_notification_seen) {
+          setBannerDismissed(true);
+        }
+      } catch {}
+
+      if (user.role === 'employer') {
+        // Item 6: Employer "JOBS POSTED" count
+        try {
+          const { count } = await supabase
+            .from('jobs')
+            .select('*', { count: 'exact', head: true })
+            .eq('employer_id', user.id);
+          setJobsPostedCount(count ?? 0);
+        } catch {}
+
+        // Item 7: Employer Average Rating from employer_ratings
+        try {
+          const { data } = await supabase
+            .from('employer_ratings')
+            .select('rating')
+            .eq('employer_id', user.id);
+          if (data && data.length > 0) {
+            const avg = data.reduce((s: number, r: any) => s + Number(r.rating || 0), 0) / data.length;
+            setLiveRating(Number(avg.toFixed(1)));
+          } else {
+            setLiveRating(null);
+          }
+        } catch {}
+      } else {
+        // Item 10: Worker Average Rating from job_ratings
+        try {
+          const { data } = await supabase
+            .from('job_ratings')
+            .select('rating')
+            .eq('worker_id', user.id);
+          if (data && data.length > 0) {
+            const avg = data.reduce((s: number, r: any) => s + Number(r.rating || 0), 0) / data.length;
+            setLiveRating(Number(avg.toFixed(1)));
+          } else {
+            setLiveRating(null);
+          }
+        } catch {}
+
+        // Item 7: Gigs Done Count
+        try {
+          const { data } = await supabase
+            .from('applications')
+            .select('id, jobs!inner(status)')
+            .eq('worker_id', user.id)
+            .in('status', ['hired', 'confirmed', 'completed'])
+            .eq('jobs.status', 'completed');
+          if (data) setGigsDone(data.length);
+        } catch {}
+
+        // Item 8: Earned amount
+        try {
+          const { data } = await supabase
+            .from('transactions')
+            .select('amount')
+            .eq('user_id', user.id)
+            .eq('type', 'credit')
+            .eq('status', 'success');
+          if (data) {
+            const sum = data.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0);
+            setTotalEarned(sum);
+          }
+        } catch {}
+      }
+    })();
+  }, [user?.id, user?.role]);
 
   if (!user) return null;
 
@@ -723,68 +818,83 @@ export default function Profile() {
 
       <div className="px-5 -mt-16 relative z-10">
 
-        {/* ── KYC Status Banner — always visible at the top ── */}
-        <motion.div
-          initial={{ y: -10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.05 }}
-          onClick={() => {
-            if (user.kycStatus === 'not_started' || user.kycStatus === 'rejected') navigate('/kyc');
-          }}
-          className={`mb-4 rounded-2xl p-4 flex items-center gap-4 ${
-            user.kycStatus === 'not_started' || user.kycStatus === 'rejected' ? 'cursor-pointer active:scale-[0.98] transition-transform' : ''
-          } ${
-            user.isApproved
-              ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50'
-              : user.kycStatus === 'submitted'
-              ? 'bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800/50'
-              : user.kycStatus === 'rejected'
-              ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50'
-              : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50'
-          }`}
-        >
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${
-            user.isApproved ? 'bg-emerald-100 dark:bg-emerald-800/50 text-emerald-600'
-            : user.kycStatus === 'submitted' ? 'bg-sky-100 dark:bg-sky-800/50 text-sky-600'
-            : user.kycStatus === 'rejected' ? 'bg-red-100 dark:bg-red-800/50 text-red-600'
-            : 'bg-amber-100 dark:bg-amber-800/50 text-amber-600'
-          }`}>
-            <Shield size={22} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className={`font-black text-sm ${
-              user.isApproved ? 'text-emerald-900 dark:text-emerald-300'
-              : user.kycStatus === 'submitted' ? 'text-sky-900 dark:text-sky-300'
-              : user.kycStatus === 'rejected' ? 'text-red-900 dark:text-red-300'
-              : 'text-amber-900 dark:text-amber-300'
+        {/* ── KYC Status Banner ── */}
+        {!(user.isApproved && bannerDismissed) && (
+          <motion.div
+            initial={{ y: -10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.05 }}
+            onClick={() => {
+              if (user.kycStatus === 'not_started' || user.kycStatus === 'rejected') navigate('/kyc');
+            }}
+            className={`mb-4 rounded-2xl p-4 flex items-center gap-4 ${
+              user.kycStatus === 'not_started' || user.kycStatus === 'rejected' ? 'cursor-pointer active:scale-[0.98] transition-transform' : ''
+            } ${
+              user.isApproved
+                ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50'
+                : user.kycStatus === 'submitted'
+                ? 'bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800/50'
+                : user.kycStatus === 'rejected'
+                ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50'
+                : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50'
+            }`}
+          >
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${
+              user.isApproved ? 'bg-emerald-100 dark:bg-emerald-800/50 text-emerald-600'
+              : user.kycStatus === 'submitted' ? 'bg-sky-100 dark:bg-sky-800/50 text-sky-600'
+              : user.kycStatus === 'rejected' ? 'bg-red-100 dark:bg-red-800/50 text-red-600'
+              : 'bg-amber-100 dark:bg-amber-800/50 text-amber-600'
             }`}>
-              {user.isApproved ? 'Identity Verified'
-                : user.kycStatus === 'submitted' ? 'KYC Under Review'
-                : user.kycStatus === 'rejected' ? 'KYC Rejected — Retry'
-                : 'Complete KYC to Unlock Jobs'}
-            </p>
-            <p className={`text-[11px] font-medium mt-0.5 ${
-              user.isApproved ? 'text-emerald-700 dark:text-emerald-500'
-              : user.kycStatus === 'submitted' ? 'text-sky-700 dark:text-sky-500'
-              : user.kycStatus === 'rejected' ? 'text-red-700 dark:text-red-500'
-              : 'text-amber-700 dark:text-amber-500'
-            }`}>
-              {user.isApproved ? 'Aadhaar & selfie approved — full access unlocked'
-                : user.kycStatus === 'submitted' ? 'Awaiting admin approval, usually within 24 hours'
-                : user.kycStatus === 'rejected' ? (user.kycRejectionReason || 'Tap to correct and resubmit documents')
-                : 'Tap here to submit your Aadhaar & take a selfie'}
-            </p>
-          </div>
-          {(user.kycStatus === 'not_started' || user.kycStatus === 'rejected') && (
-            <ChevronRight size={18} className={user.kycStatus === 'rejected' ? 'text-red-400' : 'text-amber-400'} />
-          )}
-          {user.kycStatus === 'submitted' && (
-            <span className="text-[10px] font-black text-sky-600 bg-sky-100 dark:bg-sky-800/50 px-2.5 py-1 rounded-full flex-shrink-0">Pending</span>
-          )}
-          {user.isApproved && (
-            <CheckCircle size={20} className="text-emerald-500 flex-shrink-0" />
-          )}
-        </motion.div>
+              <Shield size={22} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`font-black text-sm ${
+                user.isApproved ? 'text-emerald-900 dark:text-emerald-300'
+                : user.kycStatus === 'submitted' ? 'text-sky-900 dark:text-sky-300'
+                : user.kycStatus === 'rejected' ? 'text-red-900 dark:text-red-300'
+                : 'text-amber-900 dark:text-amber-300'
+              }`}>
+                {user.isApproved ? 'Identity Verified'
+                  : user.kycStatus === 'submitted' ? 'KYC Under Review'
+                  : user.kycStatus === 'rejected' ? 'KYC Rejected — Retry'
+                  : 'Complete KYC to Unlock Jobs'}
+              </p>
+              <p className={`text-[11px] font-medium mt-0.5 ${
+                user.isApproved ? 'text-emerald-700 dark:text-emerald-500'
+                : user.kycStatus === 'submitted' ? 'text-sky-700 dark:text-sky-500'
+                : user.kycStatus === 'rejected' ? 'text-red-700 dark:text-red-500'
+                : 'text-amber-700 dark:text-amber-500'
+              }`}>
+                {user.isApproved ? 'Aadhaar & selfie approved — full access unlocked'
+                  : user.kycStatus === 'submitted' ? 'Awaiting admin approval, usually within 24 hours'
+                  : user.kycStatus === 'rejected' ? (user.kycRejectionReason || 'Tap to correct and resubmit documents')
+                  : 'Tap here to submit your Aadhaar & take a selfie'}
+              </p>
+            </div>
+            {(user.kycStatus === 'not_started' || user.kycStatus === 'rejected') && (
+              <ChevronRight size={18} className={user.kycStatus === 'rejected' ? 'text-red-400' : 'text-amber-400'} />
+            )}
+            {user.kycStatus === 'submitted' && (
+              <span className="text-[10px] font-black text-sky-600 bg-sky-100 dark:bg-sky-800/50 px-2.5 py-1 rounded-full flex-shrink-0">Pending</span>
+            )}
+            {user.isApproved && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    localStorage.setItem(`kyc_banner_dismissed_${user.id}`, 'true');
+                    await supabase.from('profiles').update({ kyc_notification_seen: true }).eq('id', user.id);
+                  } catch {}
+                  setBannerDismissed(true);
+                }}
+                className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-800/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center hover:bg-emerald-200 transition-colors flex-shrink-0"
+                title="Dismiss notification"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </motion.div>
+        )}
 
         <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-white dark:bg-dark-700 rounded-3xl p-5 shadow-card-lg border border-slate-100 dark:border-dark-600 mb-6">
           <div className="flex gap-4">
@@ -807,7 +917,7 @@ export default function Profile() {
               </div>
               <div className="flex items-center gap-3 text-xs font-bold mt-2">
                 <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300"><MapPin size={12} /> {user.city}</span>
-                <span className="flex items-center gap-1 text-amber-500"><Star size={12} fill="currentColor" /> {user.rating}</span>
+                <span className="flex items-center gap-1 text-amber-500"><Star size={12} fill="currentColor" /> {liveRating !== null ? `★ ${liveRating}` : 'No ratings yet'}</span>
               </div>
             </div>
           </div>
@@ -823,11 +933,11 @@ export default function Profile() {
             {user.role === 'employer' ? (
               <>
                 <div className="text-center">
-                  <p className="text-xl font-black text-slate-900 dark:text-white">{user.totalJobsPosted ?? 0}</p>
+                  <p className="text-xl font-black text-slate-900 dark:text-white">{jobsPostedCount !== null ? jobsPostedCount : (user.totalJobsPosted ?? 0)}</p>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Jobs Posted</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-xl font-black text-slate-900 dark:text-white">★ {user.rating}</p>
+                  <p className="text-xl font-black text-slate-900 dark:text-white">{liveRating !== null ? `★ ${liveRating}` : 'No ratings yet'}</p>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Rating</p>
                 </div>
                 <div className="text-center">
@@ -838,16 +948,16 @@ export default function Profile() {
             ) : (
               <>
                 <div className="text-center">
-                  <p className="text-xl font-black text-slate-900 dark:text-white">{user.completedJobs ?? 0}</p>
+                  <p className="text-xl font-black text-slate-900 dark:text-white">{gigsDone !== null ? gigsDone : (user.completedJobs ?? 0)}</p>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Gigs Done</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-xl font-black text-slate-900 dark:text-white">★ {user.rating}</p>
+                  <p className="text-xl font-black text-slate-900 dark:text-white">{liveRating !== null ? `★ ${liveRating}` : 'No ratings yet'}</p>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Rating</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xl font-black text-emerald-600 dark:text-emerald-400">
-                    ₹{user.totalEarnings >= 1000 ? `${(user.totalEarnings / 1000).toFixed(1)}k` : user.totalEarnings ?? 0}
+                    ₹{(totalEarned !== null ? totalEarned : (user.totalEarnings || 0)) >= 1000 ? `${((totalEarned !== null ? totalEarned : (user.totalEarnings || 0)) / 1000).toFixed(1)}k` : (totalEarned !== null ? totalEarned : (user.totalEarnings || 0))}
                   </p>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Earned</p>
                 </div>

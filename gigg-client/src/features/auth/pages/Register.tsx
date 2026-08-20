@@ -12,7 +12,7 @@ export default function Register() {
   const [searchParams] = useSearchParams();
   const initialRole = (searchParams.get('role') || 'worker') as 'worker' | 'employer';
   const initialPhone = searchParams.get('phone') || '';
-  
+
   const [step, setStep] = useState(1);
   const { addToast } = useUIStore();
   const { sendOtp } = useAuthStore();
@@ -56,6 +56,7 @@ export default function Register() {
         name,
         city,
         area,
+        skipOnboarding: 'true',
         ...(role === 'employer' && companyName ? { companyName } : {}),
       });
       navigate(`/otp?${params.toString()}`);
@@ -97,21 +98,45 @@ export default function Register() {
           <motion.div key={step} initial={{ x: 30, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -30, opacity: 0 }} transition={{ duration: 0.2 }} className="flex flex-col gap-4">
             {step === 1 && (
               <>
-
+                {/* Role Selector Toggle */}
+                <div className="bg-slate-100 dark:bg-dark-800 p-1.5 rounded-2xl flex relative mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setRole('worker')}
+                    className={`flex-1 py-3 text-xs font-black rounded-xl transition-all z-10 flex items-center justify-center gap-2 ${role === 'worker'
+                        ? 'bg-white dark:bg-dark-700 text-primary-600 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                      }`}
+                  >
+                    <User size={15} />
+                    Worker Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole('employer')}
+                    className={`flex-1 py-3 text-xs font-black rounded-xl transition-all z-10 flex items-center justify-center gap-2 ${role === 'employer'
+                        ? 'bg-white dark:bg-dark-700 text-blue-600 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                      }`}
+                  >
+                    <Briefcase size={15} />
+                    Employer Account
+                  </button>
+                </div>
 
                 <Input label="Full Name *" placeholder="Enter your full name" value={name} onChange={e => setName(e.target.value)} leftIcon={<User size={16} />} />
                 <div>
                   <Input label="Phone Number *" type="tel" placeholder="9999999999" value={phone} onChange={e => setPhone(e.target.value)} leftIcon={<Phone size={16} />} />
                   <p className="text-xs text-amber-600 mt-1 ml-1">Any 10-digit number works. OTP will be <strong>1234</strong>.</p>
                 </div>
-                
+
                 {role === 'employer' && (
-                  <Input 
-                    label="Company Name *" 
-                    placeholder="Enter your business/employer name" 
-                    value={companyName} 
-                    onChange={e => setCompanyName(e.target.value)} 
-                    leftIcon={<Briefcase size={16} />} 
+                  <Input
+                    label="Company Name *"
+                    placeholder="Enter your business/employer name"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    leftIcon={<Briefcase size={16} />}
                   />
                 )}
 
@@ -121,9 +146,9 @@ export default function Register() {
 
             {step === 2 && (
               <>
-                <InteractiveLocationPicker 
-                  city={city} 
-                  area={area} 
+                <InteractiveLocationPicker
+                  city={city}
+                  area={area}
                   onChange={(data) => {
                     setCity(data.city);
                     setArea(data.area);

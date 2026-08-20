@@ -207,3 +207,71 @@ ALTER TABLE kyc_documents ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service reads kyc docs" ON kyc_documents FOR SELECT USING (true);
 CREATE POLICY "service inserts kyc docs" ON kyc_documents FOR INSERT WITH CHECK (true);
 CREATE POLICY "service updates kyc docs" ON kyc_documents FOR UPDATE USING (true);
+
+-- ============================================================
+-- 8. Pipeline feature migrations
+-- ============================================================
+
+-- 8a. Add pipeline_share_token to jobs (unique public share token per job)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_share_token uuid DEFAULT gen_random_uuid() UNIQUE;
+-- Backfill any existing rows that still have NULL
+UPDATE jobs SET pipeline_share_token = gen_random_uuid() WHERE pipeline_share_token IS NULL;
+
+-- 8b. Add pipeline_share_token to applications (unique share token per worker-job pairing)
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS pipeline_share_token uuid DEFAULT gen_random_uuid() UNIQUE;
+UPDATE applications SET pipeline_share_token = gen_random_uuid() WHERE pipeline_share_token IS NULL;
+
+-- 8c. Extend applications status to include 'confirmed'
+ALTER TABLE applications DROP CONSTRAINT IF EXISTS applications_status_check;
+ALTER TABLE applications ADD CONSTRAINT applications_status_check
+  CHECK (status IN ('applied', 'shortlisted', 'hired', 'confirmed', 'rejected', 'completed', 'no_show'));
+
+-- 8d. Job tasks table
+CREATE TABLE IF NOT EXISTS job_tasks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id uuid NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  title text NOT NULL DEFAULT '',
+  description text DEFAULT '',
+  task_type text NOT NULL DEFAULT 'manual' CHECK (task_type IN ('manual', 'photo', 'form', 'clock_in', 'clock_out')),
+  sort_order integer NOT NULL DEFAULT 0,
+  requires_photo boolean NOT NULL DEFAULT false,
+  requires_geotag boolean NOT NULL DEFAULT false,
+  requires_form boolean NOT NULL DEFAULT false,
+  form_fields jsonb DEFAULT '[]',
+  clock_anchor text,
+  clock_offset_minutes integer DEFAULT 0,
+  clock_window_before_minutes integer DEFAULT 30,
+  clock_window_after_minutes integer DEFAULT 30,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE job_tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "job_tasks select" ON job_tasks FOR SELECT USING (true);
+CREATE POLICY "job_tasks insert" ON job_tasks FOR INSERT WITH CHECK (true);
+CREATE POLICY "job_tasks update" ON job_tasks FOR UPDATE USING (true);
+CREATE POLICY "job_tasks delete" ON job_tasks FOR DELETE USING (true);
+
+-- 8e. Application task completions table
+CREATE TABLE IF NOT EXISTS application_task_completions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id uuid NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  job_task_id uuid NOT NULL REFERENCES job_tasks(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'submitted', 'complete', 'failed')),
+  submitted_at timestamptz,
+  reviewed_at timestamptz,
+  image_path text,
+  image_url text,
+  lat double precision,
+  lng double precision,
+  form_data jsonb,
+  employer_notes text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(application_id, job_task_id)
+);
+ALTER TABLE application_task_completions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "completions select" ON application_task_completions FOR SELECT USING (true);
+CREATE POLICY "completions insert" ON application_task_completions FOR INSERT WITH CHECK (true);
+CREATE POLICY "completions update" ON application_task_completions FOR UPDATE USING (true);
+CREATE POLICY "completions delete" ON application_task_completions FOR DELETE USING (true);
+

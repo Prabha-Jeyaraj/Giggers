@@ -13,10 +13,15 @@ import {
   employerForceComplete,
   employerReopenTask,
   getCompletionImageUrl,
+  getPublicPipeline,
 } from '../controllers/pipeline.controller';
 
 const router = Router();
 
+// ── Public (no auth) ──────────────────────────────────────────────────────
+router.get('/public/:shareToken', getPublicPipeline);
+
+// ── Authenticated ─────────────────────────────────────────────────────────
 router.use(requireAuth);
 
 router.get('/jobs/:jobId/tasks', listJobTasks);
@@ -34,3 +39,4 @@ router.post('/completions/:completionId/employer-reopen', employerReopenTask);
 router.get('/completions/:completionId/image-url', getCompletionImageUrl);
 
 export default router;
+

@@ -114,6 +114,9 @@ function mapApplication(row: Record<string, unknown>): Application {
     workerRating: Number(profilesData?.rating) || 0,
     workerProfile,
     status: (row.status as Application['status']) || 'applied',
+    negotiatedPay: row.negotiated_pay != null ? Number(row.negotiated_pay) : null,
+    paid: Boolean(row.paid),
+    paidAt: row.paid_at as string | undefined,
     appliedAt: (row.applied_at as string) || new Date().toISOString(),
     updatedAt: (row.updated_at as string) || new Date().toISOString(),
   };

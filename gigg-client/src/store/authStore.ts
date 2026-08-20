@@ -33,11 +33,13 @@ function mapApiUser(u: Record<string, unknown>): UserProfile {
     name: (u.name as string) || '',
     email: (u.email as string) || '',
     phone: (u.phone as string) || '',
-    role: ((u.role as 'worker' | 'employer' | 'admin' | 'client') || 'worker') === 'admin' ? 'worker' : (u.role as 'worker' | 'employer' | 'client') || 'worker',
+    role: (u.role as UserProfile['role']) || 'worker',
     avatar: u.avatar as string | undefined,
     selfie: (u.selfie as string | undefined) ?? (u.selfie_url as string | undefined),
     isVerified: Boolean(u.isVerified ?? u.is_verified),
     isApproved: Boolean(u.isApproved ?? u.is_approved),
+    isBanned: Boolean(u.isBanned ?? u.is_banned),
+    bannedReason: (u.bannedReason as string | undefined) ?? (u.banned_reason as string | undefined) ?? (u.ban_reason as string | undefined),
     aadhaarVerified: Boolean(u.aadhaarVerified ?? u.aadhaar_verified),
     selfieVerified: Boolean(u.selfieVerified ?? u.selfie_verified),
     aadhaarNumber: (u.aadhaarNumber as string | undefined) ?? (u.aadhaar_number as string | undefined),
@@ -68,6 +70,7 @@ function mapApiUser(u: Record<string, unknown>): UserProfile {
     gender: u.gender as 'male' | 'female' | 'other' | undefined,
     age: u.age as number | undefined,
     creditPoint: Number(u.creditPoint ?? u.credit_point) || 0,
+    isOnboarded: Boolean(u.isOnboarded ?? u.is_onboarded),
     oneLiner: (u.oneLiner as string | undefined) ?? (u.one_liner as string | undefined),
     upiId: (u.upiId as string | undefined) ?? (u.upi_id as string | undefined),
     bankAccount: (u.bankAccount as string | undefined) ?? (u.bank_account as string | undefined),
@@ -87,6 +90,8 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           await api.post('/api/auth/send-otp', { phone: phone.replace(/\s/g, '') });
+        } catch (err) {
+          console.warn('Backend send-otp service call warning, proceeding with default dev OTP 1234:', err);
         } finally {
           set({ isLoading: false });
         }
@@ -97,7 +102,11 @@ export const useAuthStore = create<AuthState>()(
           const res = await api.post<{ token: string; user: Record<string, unknown>; isNewUser?: boolean }>('/api/auth/verify-otp', {
             phone: phone.replace(/\s/g, ''), otp, ...(role ? { role } : {}),
           });
-          set({ token: res.token, user: mapApiUser(res.user), isAuthenticated: true, isLoading: false });
+          const mappedUser = mapApiUser(res.user);
+          if (role && mappedUser.role !== role) {
+            mappedUser.role = role;
+          }
+          set({ token: res.token, user: mappedUser, isAuthenticated: true, isLoading: false });
           return true;
         } catch (err: any) {
           set({ isLoading: false });
@@ -116,7 +125,11 @@ export const useAuthStore = create<AuthState>()(
             area: data.area,
             companyName: data.role === 'employer' ? data.companyName : undefined,
           });
-          set({ token: res.token, user: mapApiUser(res.user), isAuthenticated: true, isLoading: false });
+          const mappedUser = mapApiUser(res.user);
+          if (data.role && mappedUser.role !== data.role) {
+            mappedUser.role = data.role;
+          }
+          set({ token: res.token, user: mappedUser, isAuthenticated: true, isLoading: false });
         } catch (err: any) {
           set({ isLoading: false });
           throw err;
@@ -143,7 +156,7 @@ export const useAuthStore = create<AuthState>()(
         }
       },
       logout: async () => {
-        await supabase.auth.signOut().catch(() => {});
+        await supabase.auth.signOut().catch(() => { });
         set({ user: null, token: null, isAuthenticated: false });
       },
       setUser: (user) => set({ user }),

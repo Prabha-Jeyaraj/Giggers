@@ -11,7 +11,8 @@ const MIME_EXT: Record<string, string> = {
   'image/webp': 'webp',
 };
 
-const SIGNED_URL_TTL_SECONDS = 60 * 10; // 10 minutes — plenty for a page view/admin review
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 2; // 2 hours — covers a full review session
+
 
 /**
  * Uploads a base64 data-URL image to a private bucket and returns its

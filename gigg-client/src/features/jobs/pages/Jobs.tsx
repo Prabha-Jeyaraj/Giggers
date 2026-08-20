@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Search, Filter, Briefcase, FileText, Activity, Compass, MessageCircle, ShieldAlert, MapPin, Check, X as XIcon } from 'lucide-react';
+import { Search, Filter, Briefcase, FileText, Activity, Compass, MessageCircle, ShieldAlert, MapPin, Check, X as XIcon, Users, Star } from 'lucide-react';
 import { AppHeader } from '../../../components/layout/Navigation';
 import { JobCard } from '../../../components/shared/Cards';
 import { Button, Input, Modal, Chip, Skeleton, Toggle, Badge } from '../../../components/ui';
@@ -9,6 +9,7 @@ import { useJobStore } from '../../../store/jobStore';
 import { useAuthStore } from '../../../store/authStore';
 import { useUIStore } from '../../../store/uiStore';
 import { JOB_CATEGORIES } from '../constants';
+import { supabase } from '../../../lib/supabase';
 
 export default function Jobs() {
   const navigate = useNavigate();
@@ -17,6 +18,64 @@ export default function Jobs() {
   const { jobs, myJobs, applications, fetchJobs, fetchPostedJobs, fetchAppliedJobs, fetchChatThreadId, isLoading, savedJobIds, saveJob, unsaveJob, confirmHire, declineHire } = useJobStore();
   const { addToast } = useUIStore();
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [appRatings, setAppRatings] = useState<Record<string, number>>({});
+  const [employerRatings, setEmployerRatings] = useState<Record<string, number>>({});
+
+  const [rateEmpTarget, setRateEmpTarget] = useState<any>(null);
+  const [selectedEmpRating, setSelectedEmpRating] = useState<number>(10);
+  const [submittingEmpRating, setSubmittingEmpRating] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (user && user.role === 'worker') {
+      (async () => {
+        try {
+          const { data } = await supabase
+            .from('job_ratings')
+            .select('job_id, rating')
+            .eq('worker_id', user.id);
+          if (data) {
+            const map: Record<string, number> = {};
+            data.forEach((r: any) => { map[r.job_id] = r.rating; });
+            setAppRatings(map);
+          }
+        } catch {}
+
+        try {
+          const { data } = await supabase
+            .from('employer_ratings')
+            .select('job_id, rating')
+            .eq('worker_id', user.id);
+          if (data) {
+            const map: Record<string, number> = {};
+            data.forEach((r: any) => { map[r.job_id] = r.rating; });
+            setEmployerRatings(map);
+          }
+        } catch {}
+      })();
+    }
+  }, [user?.id]);
+
+  const handleSaveEmpRating = async () => {
+    if (!rateEmpTarget || !user) return;
+    setSubmittingEmpRating(true);
+    try {
+      await supabase.from('employer_ratings').upsert({
+        job_id: rateEmpTarget.jobId,
+        employer_id: rateEmpTarget.job.employerId || rateEmpTarget.job.employer_id,
+        worker_id: user.id,
+        rating: selectedEmpRating,
+        created_at: new Date().toISOString()
+      }, { onConflict: 'job_id,worker_id' });
+
+      setEmployerRatings(prev => ({ ...prev, [rateEmpTarget.jobId]: selectedEmpRating }));
+      addToast('Employer rating submitted! ★', 'success');
+      setRateEmpTarget(null);
+    } catch (err) {
+      console.error('Failed to submit employer rating:', err);
+    } finally {
+      setSubmittingEmpRating(false);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<'explore' | 'postings' | 'applications' | 'ongoing'>(() => {
     const tabParam = params.get('tab');
@@ -194,7 +253,7 @@ export default function Jobs() {
                 <p className="text-slate-500 text-center py-8">Loading postings...</p>
               ) : myJobs.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {myJobs.map((job) => <JobCard key={job.id} job={job} onClick={() => navigate(`/assign-work/${job.id}`)} />)}
+                  {myJobs.map((job) => <JobCard key={job.id} job={job} isEmployerOwn onClick={() => navigate(`/assign-work/${job.id}`)} />)}
                 </div>
               ) : (
                 <div className="text-center py-16 bg-white dark:bg-dark-800 rounded-2xl border border-slate-100 dark:border-dark-600 shadow-sm">
@@ -222,14 +281,21 @@ export default function Jobs() {
                           <h4 className="font-bold text-slate-900 dark:text-white">{app.job.title}</h4>
                           <p className="text-xs text-slate-500 mt-1">{app.job.employerName}</p>
                         </div>
-                        <div className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg ${
-                          app.status === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
-                          app.status === 'hired' ? 'bg-blue-100 text-blue-700' :
-                          app.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                          app.status === 'completed' ? 'bg-blue-100 text-blue-700' :
-                          'bg-amber-100 text-amber-700'
-                        }`}>
-                          {app.status === 'hired' ? 'Action Required' : app.status}
+                        <div className="flex flex-col items-end gap-1">
+                          <div className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg ${
+                            app.status === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                            app.status === 'hired' ? 'bg-blue-100 text-blue-700' :
+                            app.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                            app.status === 'completed' ? 'bg-blue-100 text-blue-700' :
+                            'bg-amber-100 text-amber-700'
+                          }`}>
+                            {app.status === 'hired' ? 'Action Required' : app.status}
+                          </div>
+                          {appRatings[app.jobId] && (
+                            <span className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-900/30 flex items-center gap-1">
+                              ★ {appRatings[app.jobId]}/10
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-dark-700 p-2.5 rounded-xl mb-3">
@@ -245,7 +311,9 @@ export default function Jobs() {
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                             Track Job
                           </button>
+                          {/* 1-on-1 chat with employer */}
                           <button
+                            title="Chat with Employer"
                             onClick={async () => {
                               const threadId = await fetchChatThreadId(app.jobId, user.id);
                               if (threadId) navigate(`/chat/${threadId}`);
@@ -254,6 +322,47 @@ export default function Jobs() {
                           >
                             <MessageCircle size={16} />
                           </button>
+                          {/* Group / Team chat */}
+                          <button
+                            title="Team Group Chat"
+                            onClick={() => navigate(`/group-chat/${app.jobId}`)}
+                            className="w-10 flex items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800/30"
+                          >
+                            <Users size={16} />
+                          </button>
+                        </div>
+                      )}
+                      {(app.status === 'completed' || (app as any).paid) && user && (
+                        <div className="mt-2 pt-2 border-t border-slate-100 dark:border-dark-700 flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
+                            <span>Job Rating Received:</span>
+                            {appRatings[app.jobId] ? (
+                              <span className="text-amber-600 dark:text-amber-400 font-extrabold flex items-center gap-1 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/40">
+                                <Star size={12} className="fill-current" /> ★ {appRatings[app.jobId]}/10
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-medium italic">No rating received yet</span>
+                            )}
+                          </div>
+
+                          <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
+                            <span>Your Employer Rating:</span>
+                            {employerRatings[app.jobId] ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-extrabold flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800/40">
+                                <Star size={12} className="fill-current" /> ★ {employerRatings[app.jobId]}/10
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setRateEmpTarget(app);
+                                  setSelectedEmpRating(10);
+                                }}
+                                className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-lg shadow-sm flex items-center gap-1 transition-colors"
+                              >
+                                <Star size={12} className="fill-current" /> Rate Employer
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -416,6 +525,51 @@ export default function Jobs() {
           </div>
         </div>
       </Modal>
+
+      {/* Rate Employer Modal */}
+      {rateEmpTarget && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-dark-800 rounded-3xl p-6 w-full max-w-sm border border-slate-100 dark:border-dark-700 shadow-2xl flex flex-col items-center gap-4 text-center">
+            <h3 className="text-lg font-black text-slate-900 dark:text-white">
+              Rate Employer
+            </h3>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              How was your experience working on <strong>{rateEmpTarget.job?.title}</strong> for {rateEmpTarget.job?.employerName}?
+            </p>
+
+            <div className="flex flex-col items-center gap-2 my-2">
+              <div className="text-4xl font-black text-amber-500 flex items-center justify-center gap-1">
+                <span>{selectedEmpRating}</span>
+                <span className="text-xl font-bold text-slate-400">/ 10</span>
+              </div>
+              <div className="flex flex-wrap justify-center gap-1.5 max-w-xs mt-2">
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((star) => (
+                  <button
+                    key={star}
+                    onClick={() => setSelectedEmpRating(star)}
+                    className={`w-9 h-9 rounded-xl font-black text-xs transition-all flex items-center justify-center ${
+                      selectedEmpRating >= star
+                        ? 'bg-amber-400 text-amber-950 shadow-sm scale-105'
+                        : 'bg-slate-100 dark:bg-dark-700 text-slate-400 hover:bg-slate-200'
+                    }`}
+                  >
+                    {star}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3 w-full mt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setRateEmpTarget(null)} disabled={submittingEmpRating}>
+                Cancel
+              </Button>
+              <Button variant="primary" className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold" onClick={handleSaveEmpRating} loading={submittingEmpRating}>
+                Submit Rating
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -15,11 +15,16 @@ const RoleBadge = ({ role }: { role: string }) => {
   return <span className={`badge ${map[role] || 'badge-neutral'}`}>{role}</span>;
 };
 
-const ApprovalBadge = ({ approved }: { approved: boolean }) => (
-  <span className={`badge ${approved ? 'badge-success' : 'badge-warning'}`}>
-    {approved ? '✓ Approved' : '⏳ Pending'}
-  </span>
-);
+const ApprovalBadge = ({ approved, isBanned }: { approved: boolean; isBanned?: boolean }) => {
+  if (isBanned) {
+    return <span className="badge badge-danger">✕ Rejected</span>;
+  }
+  return (
+    <span className={`badge ${approved ? 'badge-success' : 'badge-warning'}`}>
+      {approved ? '✓ Approved' : '⏳ Pending'}
+    </span>
+  );
+};
 
 const Users: React.FC = () => {
   const navigate = useNavigate();
@@ -100,7 +105,7 @@ const Users: React.FC = () => {
     {
       key: 'is_approved',
       header: 'Account',
-      render: (row) => <ApprovalBadge approved={row.is_approved} />,
+      render: (row) => <ApprovalBadge approved={row.is_approved} isBanned={row.is_banned} />,
     },
     {
       key: 'is_verified',
@@ -134,7 +139,7 @@ const Users: React.FC = () => {
       header: 'Actions',
       render: (row) => (
         <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-          {!row.is_approved && (
+          {!row.is_approved && !row.is_banned && (
             <>
               <button
                 onClick={(e) => handleApprove(e, row, true)}
@@ -153,9 +158,20 @@ const Users: React.FC = () => {
             </>
           )}
 
+          {row.is_banned && (
+            <button
+              onClick={(e) => handleApprove(e, row, true)}
+              className="btn-success py-1.5 px-2.5 text-xs"
+              title="Approve and restore account"
+            >
+              <CheckCircle size={11} /> Approve
+            </button>
+          )}
+
           <button
             onClick={(e) => handleBan(e, row)}
-            className="btn-danger py-1.5 px-2.5 text-xs"
+            className={`btn-danger py-1.5 px-2.5 text-xs ${row.is_banned ? 'bg-amber-600 hover:bg-amber-700' : ''}`}
+            title={row.is_banned ? 'Unban user' : 'Ban user'}
           >
             <UserX size={11} />
             {row.is_banned ? 'Unban' : 'Ban'}

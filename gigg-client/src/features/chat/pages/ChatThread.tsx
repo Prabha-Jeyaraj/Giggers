@@ -1,14 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { MoreVertical, Send, Image as ImageIcon, Video, CheckCircle2, Circle, Clock, XCircle, Play } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { MoreVertical, Send, Image as ImageIcon, Video, CheckCircle2, Circle, Clock, XCircle, Play, Trash2, Check, CheckCheck, Coins } from 'lucide-react';
 import { AppHeader } from '../../../components/layout/Navigation';
-import { Avatar } from '../../../components/ui';
+import { Avatar, Button, Modal } from '../../../components/ui';
 import { useChatStore } from '../../../store/chatStore';
 import { useAuthStore } from '../../../store/authStore';
 import { useJobStore } from '../../../store/jobStore';
 import { usePipelineStore } from '../../../store/pipelineStore';
 import { RecordingRecorder } from '../components/RecordingRecorder';
+import { NegotiatedPayModal } from '../../jobs/components/NegotiatedPayModal';
+import { supabase } from '../../../lib/supabase';
+import { useUIStore } from '../../../store/uiStore';
+import type { Application, Job } from '../../../types';
 import { clsx } from 'clsx';
 
 function TaskStatusIcon({ status }: { status: string }) {
@@ -22,53 +26,184 @@ export default function ChatThread() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { threads, messages, openThread, sendMessage, subscribeToThread, markThreadRead, fetchThreads } = useChatStore();
-  const { jobCandidates, fetchJobCandidates } = useJobStore();
+  const { threads, activeThread, messages, openThread, loadThreadById, sendMessage, subscribeToThread, refetchMessagesSilently, markThreadRead, fetchThreads, isLoading } = useChatStore();
+  const { jobCandidates, fetchJobCandidates, fetchJobById, myJobs, jobs, applications } = useJobStore();
   const { tasks, completions, fetchCompletions } = usePipelineStore();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [activeTab, setActiveTab] = useState<'message' | 'pipeline'>('message');
   const [recordingTaskId, setRecordingTaskId] = useState<string | 'general' | null>(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [threadApplication, setThreadApplication] = useState<Application | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const { addToast } = useUIStore();
 
-  const thread = threads.find((t) => t.id === id);
-
-  useEffect(() => {
-    if (user && threads.length === 0) {
-      fetchThreads(user.id);
-    }
-  }, [user?.id]);
+  const thread = (activeThread && activeThread.id === id) ? activeThread : threads.find((t) => t.id === id);
 
   useEffect(() => {
-    if (thread) {
-      openThread(thread);
-      markThreadRead(thread.id);
+    if (!id || !user) return;
+    if (activeThread?.id === id) return;
+
+    const existing = threads.find((t) => t.id === id);
+    if (existing) {
+      openThread(existing);
+      markThreadRead(existing.id);
+    } else {
+      loadThreadById(id, user.id);
     }
-  }, [thread?.id]);
+  }, [id, user?.id, activeThread?.id, threads]);
 
   useEffect(() => {
     if (!id) return;
     const unsubscribe = subscribeToThread(id);
-    return unsubscribe;
-  }, [id]);
+    const interval = setInterval(() => {
+      refetchMessagesSilently(id);
+    }, 2500);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [id, subscribeToThread, refetchMessagesSilently]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   useEffect(() => {
-    if (thread) fetchJobCandidates(thread.jobId);
-  }, [thread?.jobId]);
+    if (thread?.jobId) {
+      fetchJobCandidates(thread.jobId);
+      fetchJobById(thread.jobId);
+    }
+  }, [thread?.jobId, fetchJobCandidates, fetchJobById]);
 
-  const application = thread ? jobCandidates.find((c) => c.jobId === thread.jobId && c.workerId === thread.workerId) : undefined;
+  // Fetch application details directly if needed for 1-on-1 thread
+  useEffect(() => {
+    if (!thread?.jobId || !thread?.workerId || thread.isGroup) return;
+    supabase
+      .from('applications')
+      .select('id, job_id, worker_id, status, negotiated_pay, paid, paid_at, applied_at, updated_at, jobs(*), profiles!applications_worker_id_fkey(name, avatar, rating)')
+      .eq('job_id', thread.jobId)
+      .eq('worker_id', thread.workerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const profilesData = (Array.isArray(data.profiles) ? data.profiles[0] : data.profiles) as Record<string, any> | undefined;
+          const jobData = (Array.isArray(data.jobs) ? data.jobs[0] : data.jobs) as Record<string, any> | undefined;
+          const mapped: Application = {
+            id: data.id,
+            jobId: data.job_id,
+            job: jobData ? {
+              id: jobData.id,
+              title: jobData.title || '',
+              payPerWorker: Number(jobData.pay_per_worker) || 0,
+            } as any : {} as Job,
+            workerId: data.worker_id,
+            workerName: (profilesData?.name as string) || 'Worker',
+            workerAvatar: profilesData?.avatar as string | undefined,
+            workerRating: Number(profilesData?.rating) || 0,
+            status: data.status || 'applied',
+            negotiatedPay: data.negotiated_pay != null ? Number(data.negotiated_pay) : null,
+            paid: Boolean(data.paid),
+            paidAt: data.paid_at,
+            appliedAt: data.applied_at || new Date().toISOString(),
+            updatedAt: data.updated_at || new Date().toISOString(),
+          };
+          setThreadApplication(mapped);
+        }
+      });
+  }, [thread?.jobId, thread?.workerId, thread?.isGroup]);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleDeleteChatForMe = () => {
+    if (!thread || !user?.id) return;
+    try {
+      const key = `deleted_private_chats_${user.id}`;
+      const deletedIds: string[] = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!deletedIds.includes(thread.id)) {
+        deletedIds.push(thread.id);
+        localStorage.setItem(key, JSON.stringify(deletedIds));
+      }
+      addToast('Chat deleted from your list', 'info');
+      navigate('/chat');
+    } catch (err) {
+      console.error(err);
+      addToast('Failed to delete chat', 'error');
+    }
+  };
+
+  const storeCandidate = thread ? jobCandidates.find((c) => c.jobId === thread.jobId && c.workerId === thread.workerId) : undefined;
+  const storeApplication = thread ? applications.find((a) => a.jobId === thread.jobId && a.workerId === thread.workerId) : undefined;
+  const targetApplication = threadApplication || storeCandidate || storeApplication;
+
+  const associatedJob =
+    myJobs.find((j) => j.id === thread?.jobId && Number(j.payPerWorker) > 0) ||
+    jobs.find((j) => j.id === thread?.jobId && Number(j.payPerWorker) > 0) ||
+    (threadApplication?.job?.payPerWorker ? threadApplication.job : undefined) ||
+    (storeCandidate?.job?.payPerWorker ? storeCandidate.job : undefined) ||
+    (storeApplication?.job?.payPerWorker ? storeApplication.job : undefined) ||
+    targetApplication?.job;
+
+  const baseJobPay =
+    (associatedJob && Number(associatedJob.payPerWorker) > 0 ? Number(associatedJob.payPerWorker) : 0) ||
+    (threadApplication?.job?.payPerWorker ? Number(threadApplication.job.payPerWorker) : 0) ||
+    (storeCandidate?.job?.payPerWorker ? Number(storeCandidate.job.payPerWorker) : 0) ||
+    (storeApplication?.job?.payPerWorker ? Number(storeApplication.job.payPerWorker) : 0);
+
+  const negotiatedPay =
+    targetApplication?.negotiatedPay !== undefined && targetApplication?.negotiatedPay !== null
+      ? Number(targetApplication.negotiatedPay)
+      : threadApplication?.negotiatedPay !== undefined && threadApplication?.negotiatedPay !== null
+      ? Number(threadApplication.negotiatedPay)
+      : storeCandidate?.negotiatedPay !== undefined && storeCandidate?.negotiatedPay !== null
+      ? Number(storeCandidate.negotiatedPay)
+      : null;
+
+  const effectivePay = negotiatedPay != null ? negotiatedPay : baseJobPay;
+  const isEmployer = user?.role === 'employer' || (thread && user?.id === thread.employerId);
 
   useEffect(() => {
-    if (activeTab === 'pipeline' && application) {
-      fetchCompletions(application.id).catch(() => undefined);
+    if (activeTab === 'pipeline' && targetApplication) {
+      fetchCompletions(targetApplication.id).catch(() => undefined);
     }
-  }, [activeTab, application?.id]);
+  }, [activeTab, targetApplication?.id, fetchCompletions]);
 
-  if (!thread || !user) return null;
+  if (isLoading && !thread) {
+    return (
+      <div className="flex flex-col h-screen bg-slate-50 dark:bg-dark-900 font-sans">
+        <AppHeader showBack onBack={() => navigate(-1)} title="Chat" />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!thread || !user) {
+    return (
+      <div className="flex flex-col h-screen bg-slate-50 dark:bg-dark-900 font-sans">
+        <AppHeader showBack onBack={() => navigate(-1)} title="Chat" />
+        <div className="flex-1 flex flex-col items-center justify-center p-5 text-center">
+          <p className="text-slate-500 dark:text-slate-400 font-medium mb-4">Chat thread not found or unavailable.</p>
+          <button onClick={() => navigate('/chat')} className="px-4 py-2 bg-primary-500 text-white rounded-xl font-bold text-sm">
+            Back to Messages
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,11 +233,83 @@ export default function ChatThread() {
           </div> as any
         }
         rightAction={
-          <button className="w-8 h-8 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-300">
-            <MoreVertical size={18} />
-          </button>
+          <div ref={menuRef} className="relative">
+            <button
+              onClick={() => setShowMenu(prev => !prev)}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-dark-700 transition-colors"
+            >
+              <MoreVertical size={18} />
+            </button>
+            <AnimatePresence>
+              {showMenu && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: -4 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute right-0 top-10 w-44 bg-white dark:bg-dark-800 rounded-2xl shadow-lg border border-slate-100 dark:border-dark-600 overflow-hidden z-50"
+                >
+                  {isEmployer && targetApplication && !thread.isGroup && (
+                    <button
+                      onClick={() => { setShowMenu(false); setShowPayModal(true); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm font-bold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors border-b border-slate-100 dark:border-dark-700"
+                    >
+                      <Coins size={15} />
+                      Update Worker Pay
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setShowMenu(false); setShowDeleteModal(true); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                  >
+                    <Trash2 size={15} />
+                    Delete Chat
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         }
       />
+
+      {/* Negotiated Pay Banner (for 1-on-1 chats associated with a job) */}
+      {thread?.jobId && !thread.isGroup && (
+        <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/40 px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-black text-sm flex-shrink-0">
+              ₹
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                  {isEmployer ? `${thread.otherPartyName}'s Pay:` : 'Agreed Pay:'}
+                </span>
+                <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                  ₹{effectivePay}
+                </span>
+                {negotiatedPay != null ? (
+                  <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
+                    Negotiated (Base: ₹{baseJobPay})
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold">
+                    (Standard Rate)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {isEmployer && targetApplication && !targetApplication.paid && (
+            <button
+              onClick={() => setShowPayModal(true)}
+              className="px-2.5 py-1 text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors flex items-center gap-1 flex-shrink-0 shadow-sm"
+            >
+              <Coins size={13} /> Update Pay
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex bg-white dark:bg-dark-800 border-b border-slate-100 dark:border-dark-600">
         <button
@@ -143,11 +350,10 @@ export default function ChatThread() {
                   className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm font-medium leading-relaxed ${
-                      isMe
+                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm font-medium leading-relaxed ${isMe
                         ? 'bg-primary-500 text-white rounded-br-sm shadow-primary-sm'
                         : 'bg-white dark:bg-dark-700 text-slate-800 dark:text-slate-200 rounded-bl-sm shadow-sm border border-slate-100 dark:border-dark-600'
-                    }`}
+                      }`}
                   >
                     {msg.type === 'video' ? (
                       msg.videoUrl ? (
@@ -160,8 +366,17 @@ export default function ChatThread() {
                     ) : (
                       msg.text
                     )}
-                    <div className={`text-[9px] font-bold mt-1 text-right ${isMe ? 'text-primary-100' : 'text-slate-400'}`}>
-                      {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div className={`text-[9px] font-bold mt-1 flex items-center justify-end gap-1 ${isMe ? 'text-primary-100' : 'text-slate-400'}`}>
+                      <span>{new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      {isMe && (
+                        msg.isRead || msg.readAt ? (
+                          <CheckCheck size={14} className="text-cyan-300 stroke-[2.5] flex-shrink-0 drop-shadow-sm" />
+                        ) : msg.deliveredAt ? (
+                          <CheckCheck size={14} className="text-white stroke-[2.2] flex-shrink-0" />
+                        ) : (
+                          <Check size={14} className="text-slate-200 stroke-[2.2] flex-shrink-0" />
+                        )
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -206,7 +421,7 @@ export default function ChatThread() {
         </>
       ) : (
         <div className="flex-1 overflow-y-auto p-5">
-          {!application ? (
+          {!targetApplication ? (
             <p className="text-center text-slate-400 font-semibold py-10">No pipeline for this conversation yet.</p>
           ) : tasks.length === 0 ? (
             <p className="text-center text-slate-400 font-semibold py-10">Loading pipeline...</p>
@@ -242,6 +457,41 @@ export default function ChatThread() {
           threadId={thread.id}
           jobTaskId={recordingTaskId === 'general' ? undefined : recordingTaskId}
           onClose={() => setRecordingTaskId(null)}
+        />
+      )}
+
+      {/* Delete Chat Confirmation Modal */}
+      <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Chat">
+        <div className="flex flex-col gap-4 py-2">
+          <p className="text-sm font-medium text-slate-600 dark:text-slate-300 leading-relaxed">
+            Are you sure you want to delete this chat from your view? It will be removed from your chat list without affecting the other person.
+          </p>
+          <div className="flex gap-3 mt-2">
+            <Button variant="outline" className="flex-1" onClick={() => setShowDeleteModal(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" className="flex-1 bg-red-500 hover:bg-red-600 text-white" onClick={handleDeleteChatForMe}>
+              Delete Chat
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Negotiated Pay Modal */}
+      {showPayModal && targetApplication && (
+        <NegotiatedPayModal
+          open={showPayModal}
+          onClose={() => setShowPayModal(false)}
+          applicationId={targetApplication.id}
+          workerName={thread.otherPartyName}
+          defaultPay={baseJobPay}
+          currentNegotiatedPay={targetApplication.negotiatedPay}
+          onSuccess={(newPay) => {
+            if (threadApplication) {
+              setThreadApplication({ ...threadApplication, negotiatedPay: newPay });
+            }
+            if (thread.jobId) fetchJobCandidates(thread.jobId);
+          }}
         />
       )}
     </div>

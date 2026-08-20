@@ -50,6 +50,7 @@ function serializeProfile(profile) {
         kycReviewedAt: profile.kyc_reviewed_at || undefined,
         kycRejectionReason: profile.kyc_rejection_reason || undefined,
         creditPoint: profile.credit_point ?? 100,
+        isOnboarded: Boolean(profile.is_onboarded),
         oneLiner: profile.one_liner || undefined,
         upiId: profile.upi_id || undefined,
         bankAccount: profile.bank_account || undefined,
@@ -89,18 +90,25 @@ async function verifyOtpHandler(req, res) {
         return;
     }
     let profile = null;
+    const phoneClean = phone.replace(/\s/g, '');
+    const phoneAlt = phoneClean.startsWith('+91') ? phoneClean.slice(3) : `+91${phoneClean}`;
     try {
         const { data, error } = await supabase_1.supabase
             .from('profiles')
             .select('*')
-            .eq('phone', phone)
-            .single();
+            .or(`phone.eq.${phoneClean},phone.eq.${phoneAlt}`)
+            .limit(1);
         if (error && error.code !== 'PGRST116')
             throw error;
-        profile = data ?? null;
+        profile = (data && data.length > 0) ? data[0] : null;
     }
     catch (err) {
+        console.error('Database error fetching profile:', err);
         res.status(500).json({ error: 'Database error fetching profile' });
+        return;
+    }
+    if (profile && profile.is_banned) {
+        res.status(403).json({ error: profile.ban_reason ? `Your account has been banned: ${profile.ban_reason}` : 'Your account has been banned by administration.' });
         return;
     }
     if (!profile) {
@@ -117,6 +125,7 @@ async function verifyOtpHandler(req, res) {
                 role,
                 city: city || '',
                 area: area || '',
+                company_name: role === 'employer' ? (companyName || '') : undefined,
                 is_approved: false,
                 is_verified: false,
                 aadhaar_verified: false,
@@ -134,23 +143,34 @@ async function verifyOtpHandler(req, res) {
         }
     }
     else {
-        // If user already exists but selected a different role on login, update it
-        if (role && profile.role !== role) {
+        // If user already exists, update role to the selected role if provided!
+        if (role) {
+            const updates = { role };
+            if (role === 'employer' && companyName) {
+                updates.company_name = companyName;
+            }
             const { data: updatedProfile, error: updateError } = await supabase_1.supabase
                 .from('profiles')
-                .update({ role })
+                .update(updates)
                 .eq('id', profile.id)
                 .select()
                 .single();
             if (!updateError && updatedProfile) {
                 profile = updatedProfile;
             }
+            else {
+                // Fallback in memory
+                profile.role = role;
+                if (role === 'employer' && companyName) {
+                    profile.company_name = companyName;
+                }
+            }
         }
     }
-    // Both branches above guarantee profile is set by this point: the `if
-    // (!profile)` branch either returns early or assigns newProfile, and the
-    // `else` branch only runs when profile was already truthy.
     const finalProfile = profile;
+    if (role && finalProfile.role !== role) {
+        finalProfile.role = role;
+    }
     const token = (0, jwt_1.signToken)({
         id: finalProfile.id,
         phone,

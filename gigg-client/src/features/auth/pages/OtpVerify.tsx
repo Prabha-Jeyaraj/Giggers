@@ -5,6 +5,8 @@ import { ArrowLeft } from 'lucide-react';
 import { Button, OtpInput } from '../../../components/ui';
 import { useUIStore } from '../../../store/uiStore';
 import { useAuthStore } from '../../../store/authStore';
+import { OnboardingQuestions, OnboardingData } from '../components/OnboardingQuestions';
+import { supabase } from '../../../lib/supabase';
 
 export default function OtpVerify() {
   const navigate = useNavigate();
@@ -16,12 +18,15 @@ export default function OtpVerify() {
   const regCity = params.get('city') || 'Mumbai';
   const regArea = params.get('area') || '';
   const regCompany = params.get('companyName') || '';
+  // True when the user already completed onboarding questions in the Login flow
+  const skipOnboarding = params.get('skipOnboarding') === 'true';
 
   const { addToast } = useUIStore();
-  const { verifyOtp, register: registerUser, sendOtp } = useAuthStore();
+  const { verifyOtp, register: registerUser, sendOtp, user, setUser } = useAuthStore();
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [timer, setTimer] = useState(30);
   const [canResend, setCanResend] = useState(false);
 
@@ -57,11 +62,18 @@ export default function OtpVerify() {
       setVerified(true);
 
       if (mode === 'register') {
-        addToast('Account created! Complete KYC from your profile to unlock jobs.', 'success');
+        addToast('Account created! Welcome to Giggers 🎉', 'success');
+        if (skipOnboarding) {
+          // User already did onboarding questions before registering — go straight to home
+          setTimeout(() => navigate('/home', { replace: true }), 1000);
+        } else {
+          // Show onboarding questions for users who registered without the full flow
+          setShowOnboarding(true);
+        }
       } else {
         addToast('Welcome back!', 'success');
+        setTimeout(() => navigate('/home', { replace: true }), 1500);
       }
-      setTimeout(() => navigate('/home', { replace: true }), 1500);
     } catch (err: any) {
       if (err?.data?.isNewUser || err?.response?.data?.isNewUser || err?.isNewUser) {
         addToast('No account found. Please register first.', 'error');
@@ -72,6 +84,30 @@ export default function OtpVerify() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleOnboardingComplete = async (data: OnboardingData) => {
+    // Save onboarding data and mark is_onboarded = true in Supabase
+    if (user?.id) {
+      const updates: Record<string, unknown> = {
+        is_onboarded: true,
+      };
+      if (data.status) updates.work_status = data.status;
+      if (data.commitment) updates.commitment = data.commitment;
+      if (data.categories?.length) updates.categories = data.categories;
+
+      const { data: updated, error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', user.id)
+        .select()
+        .single();
+
+      if (!error && updated) {
+        setUser({ ...user, isOnboarded: true, categories: data.categories ?? user.categories });
+      }
+    }
+    navigate('/home', { replace: true });
   };
 
   const handleResend = async () => {
@@ -85,7 +121,18 @@ export default function OtpVerify() {
     }
   };
 
-  if (verified) {
+  // After successful registration: show onboarding before going to home
+  if (showOnboarding) {
+    return (
+      <OnboardingQuestions
+        role={role}
+        onBack={() => setShowOnboarding(false)}
+        onComplete={handleOnboardingComplete}
+      />
+    );
+  }
+
+  if (verified && mode !== 'register') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-dark-900 px-6">
         <div className="relative mb-8">
@@ -129,7 +176,7 @@ export default function OtpVerify() {
           className="text-center"
         >
           <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">
-            {mode === 'register' ? 'Account Created!' : 'Welcome Back!'}
+            Welcome Back!
           </h2>
           <p className="text-slate-500 dark:text-slate-400 font-medium">
             Redirecting to your dashboard…

@@ -4,6 +4,9 @@ const express_1 = require("express");
 const auth_1 = require("../middleware/auth");
 const pipeline_controller_1 = require("../controllers/pipeline.controller");
 const router = (0, express_1.Router)();
+// ── Public (no auth) ──────────────────────────────────────────────────────
+router.get('/public/:shareToken', pipeline_controller_1.getPublicPipeline);
+// ── Authenticated ─────────────────────────────────────────────────────────
 router.use(auth_1.requireAuth);
 router.get('/jobs/:jobId/tasks', pipeline_controller_1.listJobTasks);
 router.post('/jobs/:jobId/tasks', pipeline_controller_1.saveJobTasks);
