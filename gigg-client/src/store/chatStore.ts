@@ -725,7 +725,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendGroupMessage: async (jobId: string, senderId: string, text: string, type: 'text' | 'image' | 'file' = 'text') => {
-    // 1. Try backend API first (enforces is_group_closed server-side)
+    // 1. Try backend API first
     try {
       const res = await api.post<{ message: any }>('/api/chat/group-messages', {
         jobId,
@@ -733,25 +733,66 @@ export const useChatStore = create<ChatState>((set, get) => ({
         type,
       });
       const row = res?.message;
-      const newMsg: GroupChatMessage = row
-        ? {
-            id: row.id,
-            jobId: row.job_id,
-            senderId: row.sender_id,
-            type: row.type || type,
-            content: row.content ?? text,
-            createdAt: row.created_at || new Date().toISOString(),
-            profiles: row.profiles || { name: 'User', avatar: '' },
-          }
-        : {
-            id: crypto.randomUUID(),
-            jobId,
-            senderId,
-            type,
-            content: text,
-            createdAt: new Date().toISOString(),
-            profiles: { name: 'User', avatar: '' },
-          };
+      if (row) {
+        const newMsg: GroupChatMessage = {
+          id: row.id,
+          jobId: row.job_id,
+          senderId: row.sender_id,
+          type: row.type || type,
+          content: row.content ?? text,
+          createdAt: row.created_at || new Date().toISOString(),
+          profiles: row.profiles || { name: 'User', avatar: '' },
+        };
+
+        set((s) => ({
+          groupMessages: s.groupMessages.some((m) => m.id === newMsg.id) ? s.groupMessages : [...s.groupMessages, newMsg],
+          threads: s.threads.map((t) =>
+            t.isGroup && t.jobId === jobId ? { ...t, lastMessage: type === 'image' ? '📷 Photo' : text, lastMessageAt: newMsg.createdAt } : t
+          ),
+        }));
+        return;
+      }
+    } catch (backendErr: any) {
+      if (backendErr?.message?.includes('closed') || backendErr?.response?.data?.error?.includes('closed')) {
+        throw backendErr;
+      }
+      console.warn('[chatStore] Backend API sendGroupMessage failed, using Supabase direct insert:', backendErr);
+    }
+
+    // 2. Direct Supabase Fallback
+    try {
+      const { data: row, error } = await supabase
+        .from('job_group_messages')
+        .insert({
+          job_id: jobId,
+          sender_id: senderId,
+          content: text,
+          type,
+        })
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      // Fetch sender profile for instant render
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('name, avatar, selfie_url')
+        .eq('id', senderId)
+        .maybeSingle();
+
+      const newMsg: GroupChatMessage = {
+        id: row.id,
+        jobId: row.job_id,
+        senderId: row.sender_id,
+        type: row.type || type,
+        content: row.content,
+        createdAt: row.created_at || new Date().toISOString(),
+        profiles: {
+          name: profile?.name || 'User',
+          avatar: profile?.avatar || profile?.selfie_url || '',
+        },
+      };
 
       set((s) => ({
         groupMessages: s.groupMessages.some((m) => m.id === newMsg.id) ? s.groupMessages : [...s.groupMessages, newMsg],
@@ -759,10 +800,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           t.isGroup && t.jobId === jobId ? { ...t, lastMessage: type === 'image' ? '📷 Photo' : text, lastMessageAt: newMsg.createdAt } : t
         ),
       }));
-      return;
-    } catch (backendErr) {
-      // Backend reachable but rejected the send (e.g. group closed) — surface it, do not fall back.
-      throw backendErr;
+    } catch (dbErr) {
+      console.error('[chatStore] Direct Supabase group message insert failed:', dbErr);
+      throw dbErr;
     }
   },
 
