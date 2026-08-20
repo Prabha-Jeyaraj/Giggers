@@ -372,7 +372,7 @@ export default function ChatThread() {
                       msg.text
                     )}
                     <div className={`text-[9px] font-bold mt-1 flex items-center justify-end gap-1 ${isMe ? 'text-primary-100' : 'text-slate-400'}`}>
-                      <span>{formatTime12h(msg.sentAt)}</span>
+                      <span>{formatTime12h(new Date(msg.sentAt))}</span>
                       {isMe && (
                         msg.isRead || msg.readAt ? (
                           <CheckCheck size={14} className="text-cyan-300 stroke-[2.5] flex-shrink-0 drop-shadow-sm" />

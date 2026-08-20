@@ -325,7 +325,7 @@ export default function GroupChat() {
           const senderProfile = msg.profiles;
           const rawTime = msg.createdAt || (msg as any).created_at || (msg as any).sentAt;
           const formattedTime = rawTime && !isNaN(new Date(rawTime).getTime())
-            ? formatTime12h(rawTime)
+            ? formatTime12h(new Date(rawTime))
             : '';
           
           return (

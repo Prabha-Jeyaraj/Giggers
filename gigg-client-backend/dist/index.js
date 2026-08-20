@@ -45,7 +45,7 @@ app.use((_req, res, next) => {
 });
 app.use((0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,
-    max: 200,
+    max: 5000,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests' },

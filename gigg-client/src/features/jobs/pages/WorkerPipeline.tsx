@@ -12,6 +12,7 @@ import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 import type { JobTask, TaskCompletion } from '../../../types';
 import CameraCaptureModal from '../../../components/shared/CameraCaptureModal';
+import { computeTaskClockWindow } from '../../../utils/formatters';
 
 
 
@@ -245,18 +246,21 @@ export default function WorkerPipeline() {
             {tasks.map((task: JobTask, index) => {
               const completion = completionByTaskId.get(task.id);
               const status = completion?.status || 'not_started';
-              const isWorking = loadingTaskId === task.id;
+              const { opensAtMs, deadlineMs, isClockAnchored } = computeTaskClockWindow(
+                {
+                  kind: task.kind,
+                  anchorTime: task.anchorTime,
+                  openMinutesBefore: task.openMinutesBefore,
+                  openMinutesAfter: task.openMinutesAfter,
+                  responseWindowMinutes: task.responseWindowMinutes,
+                },
+                job,
+                completion
+              );
 
-              const isClockAnchored = Boolean(completion?.opensAt && completion?.deadlineAt);
-              const opensAtMs = completion?.opensAt ? new Date(completion.opensAt).getTime() : null;
+              const isWorking = loadingTaskId === task.id;
               const isNotYetOpen = isClockAnchored && status === 'not_started' && opensAtMs !== null && now < opensAtMs;
               const isLocked = status === 'not_started' && !isNotYetOpen;
-
-              const deadlineMs = isClockAnchored
-                ? new Date(completion!.deadlineAt!).getTime()
-                : completion?.availableAt
-                ? new Date(completion.availableAt).getTime() + task.responseWindowMinutes * 60_000
-                : null;
               const isPastResponseWindow = status === 'in_progress' && deadlineMs !== null && now > deadlineMs;
 
               const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();

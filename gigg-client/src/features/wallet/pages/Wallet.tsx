@@ -163,7 +163,7 @@ export default function Wallet() {
                     <div>
                       <p className="font-extrabold text-sm text-slate-900 dark:text-white mb-0.5 leading-tight">{tx.description}</p>
                       <p className="text-[10px] font-bold text-slate-400">
-                         {tx.date ? new Date(tx.date).toLocaleDateString() : ''} · {tx.date ? formatTime12h(tx.date) : ''}
+                         {tx.date ? new Date(tx.date).toLocaleDateString() : ''} · {tx.date ? formatTime12h(new Date(tx.date)) : ''}
                       </p>
                     </div>
                   </div>

@@ -253,7 +253,7 @@ export default function PublicPipelineView() {
                         </p>
                         {completion?.submittedAt && (
                           <p className="text-slate-500 text-[10px] mt-0.5">
-                            {formatTime12h(completion.submittedAt)}
+                            {formatTime12h(new Date(completion.submittedAt))}
                           </p>
                         )}
                       </div>

@@ -10,6 +10,7 @@ import { supabase } from '../../../lib/supabase';
 import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, Users, Image as ImageIcon, RotateCcw, Share2, ExternalLink } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { TaskCompletion } from '../../../types';
+import { computeTaskClockWindow } from '../../../utils/formatters';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -271,13 +272,17 @@ export default function PipelineManager() {
               const completion = completionByTaskId.get(task.id);
               const status = completion?.status || 'not_started';
 
-              const isClockAnchored = Boolean(completion?.opensAt && completion?.deadlineAt);
-              const opensAtMs = completion?.opensAt ? new Date(completion.opensAt).getTime() : null;
-              const deadlineMs = isClockAnchored
-                ? new Date(completion!.deadlineAt!).getTime()
-                : completion?.availableAt
-                ? new Date(completion.availableAt).getTime() + task.responseWindowMinutes * 60_000
-                : null;
+              const { opensAtMs, deadlineMs, isClockAnchored } = computeTaskClockWindow(
+                {
+                  kind: task.kind,
+                  anchorTime: task.anchorTime,
+                  openMinutesBefore: task.openMinutesBefore,
+                  openMinutesAfter: task.openMinutesAfter,
+                  responseWindowMinutes: task.responseWindowMinutes,
+                },
+                job,
+                completion
+              );
 
               const isNotYetOpen = isClockAnchored && status === 'not_started' && opensAtMs !== null && now < opensAtMs;
               const isWindowExpired = deadlineMs !== null && now > deadlineMs;
