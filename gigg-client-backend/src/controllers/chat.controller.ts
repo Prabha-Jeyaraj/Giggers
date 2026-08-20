@@ -82,11 +82,34 @@ export async function getThreadDetails(req: AuthenticatedRequest, res: Response)
       }
     }
 
-    const { data: messages } = await supabase
+    let { data: rawMessages } = await supabase
       .from('chat_messages')
       .select('*')
       .eq('thread_id', thread.id)
-      .order('created_at', { ascending: true });
+      .order('sent_at', { ascending: true });
+
+    if (!rawMessages) {
+      const { data: fallbackMsgs } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('thread_id', thread.id);
+      rawMessages = fallbackMsgs || [];
+    }
+
+    const messages = (rawMessages || []).map((m: any) => ({
+      id: m.id,
+      threadId: m.thread_id,
+      senderId: m.sender_id,
+      text: m.text || m.content || '',
+      type: m.type || 'text',
+      sentAt: m.sent_at || m.created_at || new Date().toISOString(),
+      isRead: Boolean(m.is_read),
+      deliveredAt: m.delivered_at,
+      readAt: m.read_at,
+      videoPath: m.video_path,
+      videoDurationSeconds: m.video_duration_seconds,
+      jobTaskId: m.job_task_id,
+    }));
 
     res.json({
       thread: {
@@ -102,7 +125,7 @@ export async function getThreadDetails(req: AuthenticatedRequest, res: Response)
         lastMessageAt: thread.last_message_at || thread.created_at,
         unreadCount: 0,
       },
-      messages: messages || [],
+      messages,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to get thread details' });
@@ -190,11 +213,12 @@ export async function sendMessage(req: AuthenticatedRequest, res: Response): Pro
       .insert({
         thread_id: threadId,
         sender_id: senderId,
-        content,
+        text: content,
         type,
         video_duration_seconds: duration,
         job_task_id: jobTaskId,
-        created_at: now,
+        sent_at: now,
+        is_read: false,
       })
       .select('*')
       .single();
@@ -210,7 +234,17 @@ export async function sendMessage(req: AuthenticatedRequest, res: Response): Pro
       .update({ last_message: content, last_message_at: now })
       .eq('id', threadId);
 
-    res.json({ message: newMsg });
+    const mapped = {
+      id: newMsg.id,
+      threadId: newMsg.thread_id,
+      senderId: newMsg.sender_id,
+      text: newMsg.text,
+      type: newMsg.type,
+      sentAt: newMsg.sent_at,
+      isRead: false,
+    };
+
+    res.json({ message: mapped });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to send message' });
   }
@@ -252,7 +286,23 @@ export async function sendGroupMessage(req: AuthenticatedRequest, res: Response)
       return;
     }
 
-    res.json({ message: newMsg });
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('name, avatar')
+      .eq('id', senderId)
+      .maybeSingle();
+
+    res.json({
+      message: {
+        id: newMsg.id,
+        jobId: newMsg.job_id,
+        senderId: newMsg.sender_id,
+        content: newMsg.content,
+        type: newMsg.type,
+        createdAt: newMsg.created_at,
+        profiles: profile || { name: 'User', avatar: '' },
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to send group message' });
   }
@@ -295,16 +345,57 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
           }
         }
 
-        const { data: lastMsgRows } = await supabase
+        let lastMsgText = row.last_message || '';
+        let lastMsgTime = row.last_message_at || row.created_at || new Date().toISOString();
+
+        let { data: lastMsgRows } = await supabase
           .from('chat_messages')
           .select('*')
           .eq('thread_id', row.id)
-          .order('created_at', { ascending: false })
+          .order('sent_at', { ascending: false })
           .limit(1);
 
+        if (!lastMsgRows || lastMsgRows.length === 0) {
+          const { data: allMsgs } = await supabase
+            .from('chat_messages')
+            .select('*')
+            .eq('thread_id', row.id);
+          lastMsgRows = allMsgs ? [allMsgs[allMsgs.length - 1]] : [];
+        }
+
         const lastMsgObj = lastMsgRows?.[0];
-        let lastMsgText = lastMsgObj?.content || lastMsgObj?.text || row.last_message || 'Tap to start conversation';
-        const lastMsgTime = lastMsgObj?.created_at || row.last_message_at || row.created_at || new Date().toISOString();
+        if (lastMsgObj) {
+          lastMsgText = lastMsgObj.text || lastMsgObj.content || row.last_message || '';
+          if (!lastMsgText) {
+            if (lastMsgObj.type === 'image') lastMsgText = '📷 Photo';
+            else if (lastMsgObj.type === 'video') lastMsgText = '🎥 Video';
+            else lastMsgText = 'Tap to start conversation';
+          }
+          lastMsgTime = lastMsgObj.sent_at || lastMsgObj.created_at || row.last_message_at || row.created_at || new Date().toISOString();
+        }
+
+        if (!lastMsgText) lastMsgText = 'Tap to start conversation';
+
+        // Calculate unread count for 1-on-1
+        let unreadCount = 0;
+        const lastRead = isEmployer ? row.employer_last_read_at : row.worker_last_read_at;
+        if (lastRead) {
+          const { count } = await supabase
+            .from('chat_messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('thread_id', row.id)
+            .neq('sender_id', userId)
+            .gt('sent_at', lastRead);
+          unreadCount = count || 0;
+        } else {
+          const { count } = await supabase
+            .from('chat_messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('thread_id', row.id)
+            .neq('sender_id', userId)
+            .eq('is_read', false);
+          unreadCount = count || 0;
+        }
 
         return {
           id: row.id,
@@ -317,7 +408,7 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
           otherPartyAvatar: otherAvatar,
           lastMessage: lastMsgText,
           lastMessageAt: lastMsgTime,
-          unreadCount: 0,
+          unreadCount,
         };
       })
     );
@@ -346,11 +437,11 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
     }
 
     const groupJobs = [...(employerJobs || []), ...workerJobs];
-    const uniqueGroupJobs = Array.from(new Map(groupJobs.map(j => [j.id, j])).values());
+    const uniqueGroupJobs = Array.from(new Map(groupJobs.map((j) => [j.id, j])).values());
 
     let groupThreads: any[] = [];
     if (uniqueGroupJobs.length > 0) {
-      const jobIds = uniqueGroupJobs.map(j => j.id);
+      const jobIds = uniqueGroupJobs.map((j) => j.id);
       const { data: groupMsgs } = await supabase
         .from('job_group_messages')
         .select('job_id, content, type, created_at, sender_id')
@@ -366,9 +457,16 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
         }
       }
 
-      groupThreads = uniqueGroupJobs.map(job => {
+      groupThreads = uniqueGroupJobs.map((job) => {
         const lastMsg = latestMsgMap.get(job.id);
         const lastMsgTime = lastMsg?.created_at || job.created_at || new Date().toISOString();
+
+        // Calculate unread count for group chat
+        let unreadCount = 0;
+        if (lastMsg && lastMsg.sender_id !== userId) {
+          unreadCount = 1;
+        }
+
         return {
           id: job.id,
           jobId: job.id,
@@ -378,11 +476,11 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
           otherPartyId: '',
           otherPartyName: `Team: ${job.title}`,
           otherPartyAvatar: job.category_emoji || '👥',
-          lastMessage: lastMsg ? (lastMsg.type === 'image' ? '📷 Photo' : lastMsg.content) : 'No group messages yet',
+          lastMessage: lastMsg ? (lastMsg.type === 'image' ? '📷 Photo' : (lastMsg.content || '')) : 'No group messages yet',
           lastMessageAt: lastMsgTime,
-          unreadCount: 0,
+          unreadCount,
           isGroup: true,
-          isClosed: Boolean(job.is_group_closed)
+          isClosed: Boolean(job.is_group_closed),
         };
       });
     }
@@ -392,6 +490,7 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
 
     res.json({ threads: allThreads });
   } catch (err: any) {
+    console.error('[Chat Backend] listUserThreads error:', err);
     res.status(500).json({ error: err.message || 'Failed to list threads' });
   }
 }
@@ -418,7 +517,7 @@ export async function listGroupMessages(req: AuthenticatedRequest, res: Response
       type: row.type || 'text',
       content: row.content || '',
       createdAt: row.created_at || new Date().toISOString(),
-      profiles: row.profiles || { name: 'User', avatar: '' }
+      profiles: row.profiles || { name: 'User', avatar: '' },
     }));
 
     res.json({ messages: mapped });
