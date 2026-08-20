@@ -113,18 +113,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
               .from('chat_messages')
               .select('*')
               .eq('thread_id', row.id)
-              .order('created_at', { ascending: false })
+              .order('sent_at', { ascending: false })
               .limit(1);
 
             const lastMsgObj = lastMsgRows?.[0];
-            let lastMsgText = lastMsgObj?.content || lastMsgObj?.text || (row.last_message as string) || '';
+            let lastMsgText = lastMsgObj?.text || (row.last_message as string) || '';
             if (!lastMsgText && lastMsgObj) {
               if (lastMsgObj.type === 'image') lastMsgText = '📷 Photo';
               else if (lastMsgObj.type === 'video') lastMsgText = '🎥 Video';
               else if (lastMsgObj.type === 'audio') lastMsgText = '🎵 Audio';
             }
             if (!lastMsgText) lastMsgText = 'Tap to start conversation';
-            const lastMsgTime = lastMsgObj?.created_at || lastMsgObj?.sent_at || (row.last_message_at as string) || (row.created_at as string) || new Date().toISOString();
+            const lastMsgTime = lastMsgObj?.sent_at || (row.last_message_at as string) || (row.created_at as string) || new Date().toISOString();
 
             let dbLastRead = isEmployer ? row.employer_last_read_at : row.worker_last_read_at;
             if (!dbLastRead) {
@@ -140,7 +140,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 .select('*', { count: 'exact', head: true })
                 .eq('thread_id', row.id)
                 .neq('sender_id', userId)
-                .gt('created_at', dbLastRead);
+                .gt('sent_at', dbLastRead);
               unreadCount = count || 0;
             } else {
               const { count } = await supabase
@@ -380,9 +380,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const { data: lastMsgData } = await supabase
       .from('chat_messages')
-      .select('content, text, created_at, sent_at')
+      .select('text, sent_at')
       .eq('thread_id', threadId)
-      .order('created_at', { ascending: false })
+      .order('sent_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -395,8 +395,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       otherPartyId,
       otherPartyName: otherName,
       otherPartyAvatar: otherAvatar,
-      lastMessage: lastMsgData?.content || lastMsgData?.text || (row.last_message as string) || '',
-      lastMessageAt: lastMsgData?.created_at || lastMsgData?.sent_at || (row.created_at as string) || new Date().toISOString(),
+      lastMessage: lastMsgData?.text || (row.last_message as string) || '',
+      lastMessageAt: lastMsgData?.sent_at || (row.created_at as string) || new Date().toISOString(),
       unreadCount: 0,
     };
 
@@ -404,7 +404,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .from('chat_messages')
       .select('*')
       .eq('thread_id', threadId)
-      .order('created_at', { ascending: true });
+      .order('sent_at', { ascending: true });
 
     const now = new Date().toISOString();
     const messages = (msgData || []).map((m) => {
@@ -444,7 +444,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .from('chat_messages')
       .select('*')
       .eq('thread_id', thread.id)
-      .order('created_at', { ascending: true });
+      .order('sent_at', { ascending: true });
 
     const now = new Date().toISOString();
     const currentUserId = useAuthStore.getState().user?.id;
@@ -521,9 +521,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       id: newMsgId,
       thread_id: threadId,
       sender_id: senderId,
-      content: text,
+      text,
       type: 'text',
-      created_at: now,
+      sent_at: now,
     });
 
     if (insertErr) {
@@ -559,7 +559,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .from('chat_messages')
         .select('*')
         .eq('thread_id', threadId)
-        .order('created_at', { ascending: true });
+        .order('sent_at', { ascending: true });
 
       if (data) {
         const mapped = data.map((r) => mapMessage(r as Record<string, unknown>));
@@ -711,57 +711,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendGroupMessage: async (jobId: string, senderId: string, text: string, type: 'text' | 'image' | 'file' = 'text') => {
-    const newMsgId = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('name, avatar')
-      .eq('id', senderId)
-      .maybeSingle();
-
-    const newMsg: GroupChatMessage = {
-      id: newMsgId,
-      jobId,
-      senderId,
-      type,
-      content: text,
-      createdAt: now,
-      profiles: profile || { name: 'User', avatar: '' }
-    };
-
-    // Optimistically update groupMessages
-    set((s) => ({
-      groupMessages: s.groupMessages.some((m) => m.id === newMsgId) ? s.groupMessages : [...s.groupMessages, newMsg],
-      threads: s.threads.map((t) =>
-        t.isGroup && t.jobId === jobId ? { ...t, lastMessage: type === 'image' ? '📷 Photo' : text, lastMessageAt: now } : t
-      ),
-    }));
-
-    // 1. Try backend API (service role bypasses RLS)
+    // 1. Try backend API first (enforces is_group_closed server-side)
     try {
-      await api.post('/api/chat/group-messages', {
+      const res = await api.post<{ message: any }>('/api/chat/group-messages', {
         jobId,
         content: text,
         type,
       });
+      const row = res?.message;
+      const newMsg: GroupChatMessage = row
+        ? {
+            id: row.id,
+            jobId: row.job_id,
+            senderId: row.sender_id,
+            type: row.type || type,
+            content: row.content ?? text,
+            createdAt: row.created_at || new Date().toISOString(),
+            profiles: row.profiles || { name: 'User', avatar: '' },
+          }
+        : {
+            id: crypto.randomUUID(),
+            jobId,
+            senderId,
+            type,
+            content: text,
+            createdAt: new Date().toISOString(),
+            profiles: { name: 'User', avatar: '' },
+          };
+
+      set((s) => ({
+        groupMessages: s.groupMessages.some((m) => m.id === newMsg.id) ? s.groupMessages : [...s.groupMessages, newMsg],
+        threads: s.threads.map((t) =>
+          t.isGroup && t.jobId === jobId ? { ...t, lastMessage: type === 'image' ? '📷 Photo' : text, lastMessageAt: newMsg.createdAt } : t
+        ),
+      }));
       return;
     } catch (backendErr) {
-      console.warn('[GroupChat] Backend sendGroupMessage fallback to Supabase:', backendErr);
-    }
-
-    // 2. Direct Supabase fallback
-    const { error: groupInsertErr } = await supabase.from('job_group_messages').insert({
-      id: newMsgId,
-      job_id: jobId,
-      sender_id: senderId,
-      type,
-      content: text,
-      created_at: now,
-    });
-
-    if (groupInsertErr) {
-      console.error('[GroupChat] Failed to insert group message into Supabase:', groupInsertErr);
+      // Backend reachable but rejected the send (e.g. group closed) — surface it, do not fall back.
+      throw backendErr;
     }
   },
 

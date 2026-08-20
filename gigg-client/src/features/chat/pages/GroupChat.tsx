@@ -205,9 +205,9 @@ export default function GroupChat() {
     try {
       await sendGroupMessage(jobId, user.id, inputText.trim(), 'text');
       setInputText('');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      addToast('Failed to send message', 'error');
+      addToast(err?.message || 'Failed to send message', 'error');
     } finally {
       setSending(false);
     }
@@ -236,7 +236,7 @@ export default function GroupChat() {
       }
     } catch (err: any) {
       console.error('Failed to send image:', err);
-      addToast('Failed to upload image', 'error');
+      addToast(err?.message || 'Failed to upload image', 'error');
     } finally {
       setSending(false);
       // Reset input

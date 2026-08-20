@@ -86,17 +86,22 @@ export function OnboardingQuestions({ role, onBack, onComplete }: OnboardingQues
   };
 
   const toggleCategory = (catTitle: string) => {
-    setValidationError(null);
     if (selectedCategories.includes(catTitle)) {
+      setValidationError(null);
       setSelectedCategories(selectedCategories.filter((c) => c !== catTitle));
     } else {
+      if (selectedCategories.length >= 3) {
+        setValidationError('You can select up to 3 categories only. Deselect one to choose another.');
+        return;
+      }
+      setValidationError(null);
       setSelectedCategories([...selectedCategories, catTitle]);
     }
   };
 
   const handleFinish = () => {
-    if (selectedCategories.length < 3) {
-      setValidationError(`Please select at least 3 categories to continue (currently ${selectedCategories.length} selected).`);
+    if (selectedCategories.length !== 3) {
+      setValidationError(`Please select exactly 3 categories to continue (currently ${selectedCategories.length} selected).`);
       return;
     }
     setValidationError(null);
@@ -358,14 +363,14 @@ export function OnboardingQuestions({ role, onBack, onComplete }: OnboardingQues
             >
               <div className="text-center mb-5">
                 <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mb-1.5">
-                  Select your skills/category (choose at least 3)
+                  Select your skills/category (choose 3)
                 </h2>
                 <p className="text-white/60 text-xs sm:text-sm font-medium">
-                  Choose <strong className="text-white">at least 3</strong> categories to continue
+                  Choose <strong className="text-white">exactly 3</strong> categories to continue
                 </p>
                 <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-xs font-bold text-white">
-                  <span>Selected: {selectedCategories.length} / 3 minimum</span>
-                  {selectedCategories.length >= 3 && <CheckCircle size={14} className="text-emerald-400" />}
+                  <span>Selected: {selectedCategories.length} / 3</span>
+                  {selectedCategories.length === 3 && <CheckCircle size={14} className="text-emerald-400" />}
                 </div>
               </div>
 
@@ -386,18 +391,22 @@ export function OnboardingQuestions({ role, onBack, onComplete }: OnboardingQues
                 {CATEGORY_OPTIONS.map((cat) => {
                   const IconComp = cat.icon;
                   const isSelected = selectedCategories.includes(cat.title);
+                  const isDisabled = !isSelected && selectedCategories.length >= 3;
 
                   return (
                     <motion.button
                       key={cat.id}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.98 }}
+                      whileHover={isDisabled ? {} : { scale: 1.01 }}
+                      whileTap={isDisabled ? {} : { scale: 0.98 }}
                       onClick={() => toggleCategory(cat.title)}
+                      disabled={isDisabled}
                       className="w-full p-4 rounded-2xl text-left flex items-center gap-3.5 transition-all relative overflow-hidden"
                       style={{
                         backgroundColor: isSelected ? `rgba(${accentRgb}, 0.15)` : 'rgba(255,255,255,0.05)',
                         border: isSelected ? `2px solid ${accentColor}` : '1.5px solid rgba(255,255,255,0.12)',
                         boxShadow: isSelected ? `0 4px 16px rgba(${accentRgb}, 0.2)` : 'none',
+                        opacity: isDisabled ? 0.4 : 1,
+                        cursor: isDisabled ? 'not-allowed' : 'pointer',
                       }}
                     >
                       <div

@@ -86,7 +86,12 @@ export async function getThreadDetails(req: AuthenticatedRequest, res: Response)
       .from('chat_messages')
       .select('*')
       .eq('thread_id', thread.id)
-      .order('created_at', { ascending: true });
+      .order('sent_at', { ascending: true });
+
+    const lastReadAt = isEmployer ? thread.employer_last_read_at : thread.worker_last_read_at;
+    const unreadCount = (messages || []).filter((m: any) =>
+      m.sender_id !== currentUserId && (!lastReadAt || new Date(m.sent_at).getTime() > new Date(lastReadAt).getTime())
+    ).length;
 
     res.json({
       thread: {
@@ -100,7 +105,7 @@ export async function getThreadDetails(req: AuthenticatedRequest, res: Response)
         otherPartyAvatar: otherAvatar,
         lastMessage: thread.last_message || '',
         lastMessageAt: thread.last_message_at || thread.created_at,
-        unreadCount: 0,
+        unreadCount,
       },
       messages: messages || [],
     });
@@ -190,11 +195,11 @@ export async function sendMessage(req: AuthenticatedRequest, res: Response): Pro
       .insert({
         thread_id: threadId,
         sender_id: senderId,
-        content,
+        text: content,
         type,
         video_duration_seconds: duration,
         job_task_id: jobTaskId,
-        created_at: now,
+        sent_at: now,
       })
       .select('*')
       .single();
@@ -234,6 +239,17 @@ export async function sendGroupMessage(req: AuthenticatedRequest, res: Response)
   const now = new Date().toISOString();
 
   try {
+    const { data: job } = await supabase
+      .from('jobs')
+      .select('is_group_closed')
+      .eq('id', jobId)
+      .maybeSingle();
+
+    if (job?.is_group_closed) {
+      res.status(403).json({ error: 'This group chat has been closed' });
+      return;
+    }
+
     const { data: newMsg, error: insertErr } = await supabase
       .from('job_group_messages')
       .insert({
@@ -299,12 +315,20 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
           .from('chat_messages')
           .select('*')
           .eq('thread_id', row.id)
-          .order('created_at', { ascending: false })
+          .order('sent_at', { ascending: false })
           .limit(1);
 
         const lastMsgObj = lastMsgRows?.[0];
-        let lastMsgText = lastMsgObj?.content || lastMsgObj?.text || row.last_message || 'Tap to start conversation';
-        const lastMsgTime = lastMsgObj?.created_at || row.last_message_at || row.created_at || new Date().toISOString();
+        let lastMsgText = lastMsgObj?.text || row.last_message || 'Tap to start conversation';
+        const lastMsgTime = lastMsgObj?.sent_at || row.last_message_at || row.created_at || new Date().toISOString();
+
+        const lastReadAt = isEmployer ? row.employer_last_read_at : row.worker_last_read_at;
+        const { count: unreadCount } = await supabase
+          .from('chat_messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('thread_id', row.id)
+          .neq('sender_id', userId)
+          .gt('sent_at', lastReadAt || '1970-01-01T00:00:00.000Z');
 
         return {
           id: row.id,
@@ -317,7 +341,7 @@ export async function listUserThreads(req: AuthenticatedRequest, res: Response):
           otherPartyAvatar: otherAvatar,
           lastMessage: lastMsgText,
           lastMessageAt: lastMsgTime,
-          unreadCount: 0,
+          unreadCount: unreadCount || 0,
         };
       })
     );
