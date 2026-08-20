@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { JobTask, TaskCompletion } from '../types';
 import { api } from '../lib/api';
+import { supabase } from '../lib/supabase';
 
 function mapTask(t: any): JobTask {
   return {
@@ -88,19 +89,48 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     set({ isLoading: true });
     try {
       const res = await api.get<{ tasks: any[]; completions: any[] }>(`/api/pipeline/applications/${applicationId}/completions`);
-      set({ tasks: res.tasks.map(mapTask), completions: res.completions.map(mapCompletion), isLoading: false });
+      if (res && Array.isArray(res.tasks) && res.tasks.length > 0) {
+        set({ tasks: res.tasks.map(mapTask), completions: (res.completions || []).map(mapCompletion), isLoading: false });
+        return;
+      }
     } catch (err) {
-      set({ isLoading: false });
-      throw err;
+      console.warn('[pipelineStore] API completions fetch failed, attempting Supabase fallback:', err);
     }
+
+    // Direct Supabase fallback
+    try {
+      const { data: app } = await supabase.from('applications').select('job_id').eq('id', applicationId).maybeSingle();
+      if (app?.job_id) {
+        const { data: dbTasks } = await supabase.from('job_tasks').select('*').eq('job_id', app.job_id).order('sort_order', { ascending: true });
+        const { data: dbCompletions } = await supabase.from('application_task_completions').select('*').eq('application_id', applicationId);
+        if (dbTasks && dbTasks.length > 0) {
+          set({
+            tasks: dbTasks.map(mapTask),
+            completions: (dbCompletions || []).map(mapCompletion),
+            isLoading: false,
+          });
+          return;
+        }
+      }
+    } catch (dbErr) {
+      console.error('[pipelineStore] Direct Supabase fallback failed:', dbErr);
+    }
+    set({ isLoading: false });
   },
 
   /** Re-fetch tasks/completions without toggling isLoading — used after a
    * submit/review so newly-unlocked tasks appear without flashing the
    * page's full loading state. */
   refetchCompletionsSilently: async (applicationId: string) => {
-    const res = await api.get<{ tasks: any[]; completions: any[] }>(`/api/pipeline/applications/${applicationId}/completions`);
-    set({ tasks: res.tasks.map(mapTask), completions: res.completions.map(mapCompletion) });
+    try {
+      const res = await api.get<{ tasks: any[]; completions: any[] }>(`/api/pipeline/applications/${applicationId}/completions`);
+      if (res && Array.isArray(res.tasks) && res.tasks.length > 0) {
+        set({ tasks: res.tasks.map(mapTask), completions: (res.completions || []).map(mapCompletion) });
+        return;
+      }
+    } catch {
+      // Ignore silent refetch errors
+    }
   },
 
   submitTick: async (completionId: string) => {
