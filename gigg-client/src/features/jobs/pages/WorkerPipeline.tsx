@@ -350,7 +350,7 @@ export default function WorkerPipeline() {
         onClose={() => { setCameraOpen(false); setPendingImageCompletionId(null); setPendingTask(null); }}
       />
       
-      <div className="bg-dark-900 text-white px-4 pt-4 pb-8">
+      <div className="bg-slate-900 dark:bg-dark-950 text-white px-8 pt-6 pb-16">
         <button
           type="button"
           onClick={() => navigate('/jobs')}
@@ -359,7 +359,7 @@ export default function WorkerPipeline() {
           <ChevronLeft size={16} />
           Active Job
         </button>
-        <h1 className="text-xl font-black">{job.title}</h1>
+        <h1 className="text-xl font-bold">{job.title}</h1>
         {job.location && (
           <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
             <MapPin size={12} className="text-primary-500" />
@@ -368,10 +368,10 @@ export default function WorkerPipeline() {
         )}
       </div>
 
-      <div className="max-w-xl mx-auto px-4 -mt-4">
-        <div className="bg-white dark:bg-dark-800 rounded-2xl border border-slate-100 dark:border-dark-700 shadow-sm p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">YOUR PIPELINE TASKS</h2>
+      <div className="max-w-2xl mx-auto px-6 -mt-8">
+        <div className="bg-white dark:bg-dark-800 rounded-2xl border border-slate-100 dark:border-dark-700 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-wider">YOUR PIPELINE TASKS</h2>
             <button
               type="button"
               onClick={handleShareLink}

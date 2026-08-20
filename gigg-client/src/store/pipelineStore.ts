@@ -198,8 +198,62 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   submitImage: async (completionId: string, imageDataUrl: string) => {
-    const res = await api.post<{ completion: any }>(`/api/pipeline/completions/${completionId}/image`, { image: imageDataUrl });
-    await get().refetchCompletionsSilently(res.completion.applicationId);
+    // 1. Try backend API
+    try {
+      const res = await api.post<{ completion: any }>(`/api/pipeline/completions/${completionId}/image`, { image: imageDataUrl });
+      if (res?.completion) {
+        await get().refetchCompletionsSilently(res.completion.applicationId);
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[pipelineStore] API submitImage failed, attempting direct Supabase fallback:', err);
+    }
+
+    // 2. Direct Supabase Storage & Database Fallback
+    try {
+      const { data: comp } = await supabase
+        .from('application_task_completions')
+        .select('*')
+        .eq('id', completionId)
+        .maybeSingle();
+
+      if (!comp) throw new Error('Completion not found');
+
+      // Convert dataUrl to blob
+      const res = await fetch(imageDataUrl);
+      const blob = await res.blob();
+      const filename = `${comp.application_id}/task-${comp.job_task_id}-${Date.now()}.jpg`;
+
+      // Upload to pipeline-task-images
+      let uploadedPath: string = filename;
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('pipeline-task-images')
+        .upload(filename, blob, { contentType: 'image/jpeg', upsert: true });
+
+      if (uploadErr) {
+        // Fallback: store dataUrl directly
+        uploadedPath = imageDataUrl;
+      } else if (uploadData?.path) {
+        uploadedPath = uploadData.path;
+      }
+
+      const { data: updated, error: updateErr } = await supabase
+        .from('application_task_completions')
+        .update({
+          status: 'submitted',
+          image_path: uploadedPath,
+          submitted_at: new Date().toISOString(),
+        })
+        .eq('id', completionId)
+        .select('*')
+        .single();
+
+      if (updateErr) throw updateErr;
+      await get().refetchCompletionsSilently(comp.application_id);
+    } catch (dbErr) {
+      console.error('[pipelineStore] Direct submitImage failed:', dbErr);
+      throw dbErr;
+    }
   },
 
   reviewCompletion: async (completionId: string, approve: boolean, rejectionReason?: string) => {
