@@ -21,7 +21,7 @@ export default function WorkerPipeline() {
   const navigate = useNavigate();
   const { jobs, fetchJobs, applications, fetchAppliedJobs } = useJobStore();
   const { user } = useAuthStore();
-  const { tasks, completions, isLoading, fetchCompletions, refetchCompletionsSilently, submitTick, submitForm, submitImage } = usePipelineStore();
+  const { tasks: storeTasks, completions, isLoading, fetchCompletions, fetchJobTasks, refetchCompletionsSilently, submitTick, submitForm, submitImage } = usePipelineStore();
   const { addToast } = useUIStore();
 
   const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null);
@@ -37,10 +37,45 @@ export default function WorkerPipeline() {
   const job = storeJob || directJob;
   const application = storeApp || directApp;
 
+  // Fallback default tasks if database has not populated custom tasks
+  const fallbackTasks: JobTask[] = [
+    {
+      id: `default-opening-${jobId}`,
+      jobId: jobId || '',
+      kind: 'opening',
+      sortOrder: 0,
+      title: 'Confirm Arrival',
+      description: 'Upload a photo showing you have arrived at the venue.',
+      completionType: 'image',
+      responseWindowMinutes: 15,
+      autoFailMinutes: 30,
+      openMinutesBefore: 15,
+      openMinutesAfter: 30,
+      requiresReview: true,
+    },
+    {
+      id: `default-closing-${jobId}`,
+      jobId: jobId || '',
+      kind: 'closing',
+      sortOrder: 1,
+      title: 'Confirm Checkout',
+      description: 'Upload a photo before you leave the venue.',
+      completionType: 'image',
+      responseWindowMinutes: 15,
+      autoFailMinutes: 30,
+      openMinutesBefore: 15,
+      openMinutesAfter: 30,
+      requiresReview: true,
+    },
+  ];
+
+  const tasks = storeTasks.length > 0 ? storeTasks : fallbackTasks;
+
   useEffect(() => {
     if (!storeJob) fetchJobs();
     if (user && !storeApp) fetchAppliedJobs(user.id);
-  }, [storeJob, user, storeApp, fetchJobs, fetchAppliedJobs]);
+    if (jobId) fetchJobTasks(jobId).catch(() => {});
+  }, [storeJob, user, storeApp, jobId, fetchJobs, fetchAppliedJobs, fetchJobTasks]);
 
   useEffect(() => {
     if (!jobId || !user?.id) return;
