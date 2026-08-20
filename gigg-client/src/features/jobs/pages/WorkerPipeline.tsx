@@ -7,12 +7,28 @@ import { useAuthStore } from '../../../store/authStore';
 import { usePipelineStore } from '../../../store/pipelineStore';
 import { useUIStore } from '../../../store/uiStore';
 import { supabase } from '../../../lib/supabase';
-import { CheckCircle2, Circle, Camera, MapPin, Upload, Clock, XCircle, Share2 } from 'lucide-react';
+import { CheckCircle2, Circle, Camera, MapPin, Upload, Clock, XCircle, Share2, ChevronLeft } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
-import type { JobTask, TaskCompletion } from '../../../types';
+import type { JobTask, TaskCompletion, TaskCompletionStatus } from '../../../types';
 import CameraCaptureModal from '../../../components/shared/CameraCaptureModal';
 import { computeTaskClockWindow } from '../../../utils/formatters';
+
+const STATUS_STYLES: Record<string, string> = {
+  complete: 'bg-green-500 border-green-200 dark:border-green-900/50 text-white',
+  failed: 'bg-red-500 border-red-200 dark:border-red-900/50 text-white',
+  submitted: 'bg-amber-400 border-amber-100 dark:border-amber-900/50 text-white',
+  in_progress: 'bg-amber-400 border-amber-100 dark:border-amber-900/50 text-white',
+  not_started: 'bg-white dark:bg-dark-800 border-slate-200 dark:border-dark-600 text-slate-400',
+};
+
+const STATUS_ICONS: Record<string, React.ReactNode> = {
+  complete: <CheckCircle2 size={20} />,
+  failed: <XCircle size={20} />,
+  submitted: <Clock size={20} />,
+  in_progress: <Clock size={20} />,
+  not_started: <Circle size={20} />,
+};
 
 
 
@@ -173,14 +189,38 @@ export default function WorkerPipeline() {
     );
   }
 
+  const [pendingTask, setPendingTask] = useState<JobTask | null>(null);
+
   const completionByTaskId = new Map(completions.map((c) => [c.jobTaskId, c]));
   const allComplete = tasks.length > 0 && tasks.every((t) => completionByTaskId.get(t.id)?.status === 'complete');
 
-  const handleTick = async (completion: TaskCompletion) => {
-    setLoadingTaskId(completion.jobTaskId);
+  const handleTick = async (task: JobTask, completion?: TaskCompletion) => {
+    let completionId = completion?.id;
+    if (!completionId && application?.id) {
+      try {
+        const { data: created } = await supabase
+          .from('application_task_completions')
+          .upsert({
+            application_id: application.id,
+            job_task_id: task.id,
+            status: 'in_progress',
+            available_at: new Date().toISOString(),
+          }, { onConflict: 'application_id,job_task_id' })
+          .select('*')
+          .single();
+        if (created?.id) completionId = created.id;
+      } catch {}
+    }
+    if (!completionId) {
+      addToast('Could not find task to mark complete', 'error');
+      return;
+    }
+
+    setLoadingTaskId(task.id);
     try {
-      await submitTick(completion.id);
+      await submitTick(completionId);
       addToast('Task marked complete', 'success');
+      if (application?.id) await refetchCompletionsSilently(application.id);
     } catch {
       addToast('Failed to submit task', 'error');
     } finally {
@@ -188,16 +228,39 @@ export default function WorkerPipeline() {
     }
   };
 
-  const handleFormSubmit = async (completion: TaskCompletion) => {
-    const value = formDrafts[completion.id];
+  const handleFormSubmit = async (task: JobTask, completion?: TaskCompletion) => {
+    const key = completion?.id || task.id;
+    const value = formDrafts[key];
     if (!value?.trim()) {
       addToast('Please fill in the field before submitting', 'warning');
       return;
     }
-    setLoadingTaskId(completion.jobTaskId);
+    let completionId = completion?.id;
+    if (!completionId && application?.id) {
+      try {
+        const { data: created } = await supabase
+          .from('application_task_completions')
+          .upsert({
+            application_id: application.id,
+            job_task_id: task.id,
+            status: 'in_progress',
+            available_at: new Date().toISOString(),
+          }, { onConflict: 'application_id,job_task_id' })
+          .select('*')
+          .single();
+        if (created?.id) completionId = created.id;
+      } catch {}
+    }
+    if (!completionId) {
+      addToast('Could not find task to submit form', 'error');
+      return;
+    }
+
+    setLoadingTaskId(task.id);
     try {
-      await submitForm(completion.id, { response: value.trim() });
+      await submitForm(completionId, { response: value.trim() });
       addToast('Task submitted to employer for verification', 'success');
+      if (application?.id) await refetchCompletionsSilently(application.id);
     } catch {
       addToast('Failed to submit task', 'error');
     } finally {
@@ -205,22 +268,61 @@ export default function WorkerPipeline() {
     }
   };
 
-  const handleOpenCamera = (completion: TaskCompletion) => {
-    setPendingImageCompletionId(completion.id);
+  const handleOpenCamera = async (task: JobTask, completion?: TaskCompletion) => {
+    setPendingTask(task);
+    if (completion?.id) {
+      setPendingImageCompletionId(completion.id);
+    } else if (application?.id) {
+      try {
+        const { data: created } = await supabase
+          .from('application_task_completions')
+          .upsert({
+            application_id: application.id,
+            job_task_id: task.id,
+            status: 'in_progress',
+            available_at: new Date().toISOString(),
+          }, { onConflict: 'application_id,job_task_id' })
+          .select('*')
+          .single();
+        if (created?.id) setPendingImageCompletionId(created.id);
+      } catch {}
+    }
     setCameraOpen(true);
   };
 
   const handleCameraCapture = async (dataUrl: string) => {
     setCameraOpen(false);
-    const completionId = pendingImageCompletionId;
+    let completionId = pendingImageCompletionId;
+    const task = pendingTask;
     setPendingImageCompletionId(null);
-    if (!completionId) return;
-    const completion = completions.find((c) => c.id === completionId);
-    if (!completion) return;
-    setLoadingTaskId(completion.jobTaskId);
+    setPendingTask(null);
+
+    if (!completionId && task && application?.id) {
+      try {
+        const { data: created } = await supabase
+          .from('application_task_completions')
+          .upsert({
+            application_id: application.id,
+            job_task_id: task.id,
+            status: 'in_progress',
+            available_at: new Date().toISOString(),
+          }, { onConflict: 'application_id,job_task_id' })
+          .select('*')
+          .single();
+        if (created?.id) completionId = created.id;
+      } catch {}
+    }
+
+    if (!completionId) {
+      addToast('Could not find task to submit photo', 'error');
+      return;
+    }
+
+    setLoadingTaskId(task?.id || completionId);
     try {
       await submitImage(completionId, dataUrl);
       addToast('Task submitted to employer for verification', 'success');
+      if (application?.id) await refetchCompletionsSilently(application.id);
     } catch {
       addToast('Failed to submit photo', 'error');
     } finally {
@@ -229,93 +331,88 @@ export default function WorkerPipeline() {
   };
 
   const handleShareLink = async () => {
-    if (!application?.id) {
-      addToast('Pipeline is not initialized yet', 'error');
-      return;
-    }
-    const token = application.id;
-    const url = `${window.location.origin}/pipeline/share/${token}`;
+    if (!application?.id) return;
+    const url = `${window.location.origin}/pipeline/share/${application.id}`;
     try {
       await navigator.clipboard.writeText(url);
       addToast('Your pipeline share link copied to clipboard!', 'success');
     } catch {
-      addToast(`Pipeline link: ${url}`, 'info');
+      addToast('Failed to copy link', 'error');
     }
   };
 
   return (
-    <div className="pb-24 font-sans bg-slate-50 dark:bg-dark-900 min-h-screen">
-      <AppHeader title="Active Job" showBack onBack={() => navigate(-1)} />
+    <div className="min-h-screen bg-slate-50 dark:bg-dark-900 pb-20">
       <CameraCaptureModal
         open={cameraOpen}
         jobLocation={job.location || job.address}
         onCapture={handleCameraCapture}
-        onClose={() => { setCameraOpen(false); setPendingImageCompletionId(null); }}
+        onClose={() => { setCameraOpen(false); setPendingImageCompletionId(null); setPendingTask(null); }}
       />
-
-      <div className="bg-slate-800 h-40 w-full relative">
-        <div className="absolute inset-0 opacity-50 bg-[url('https://maps.googleapis.com/maps/api/staticmap?center=19.076,72.877&zoom=14&size=600x300&maptype=roadmap&style=feature:all|element:labels|visibility:off')] bg-cover bg-center" />
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent" />
-        <div className="absolute bottom-4 left-5 right-5 text-white">
-          <h2 className="text-xl font-extrabold shadow-sm">{job.title}</h2>
-          <p className="text-xs font-semibold opacity-90 flex items-center gap-1 mt-1">
-            <MapPin size={12} /> {job.location}
+      
+      <div className="bg-dark-900 text-white px-4 pt-4 pb-8">
+        <button
+          type="button"
+          onClick={() => navigate('/jobs')}
+          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white font-medium mb-3 cursor-pointer"
+        >
+          <ChevronLeft size={16} />
+          Active Job
+        </button>
+        <h1 className="text-xl font-black">{job.title}</h1>
+        {job.location && (
+          <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+            <MapPin size={12} className="text-primary-500" />
+            {job.location}
           </p>
-        </div>
+        )}
       </div>
 
-      <div className="px-5 pt-6">
-        <div className="bg-white dark:bg-dark-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-dark-700">
+      <div className="max-w-xl mx-auto px-4 -mt-4">
+        <div className="bg-white dark:bg-dark-800 rounded-2xl border border-slate-100 dark:border-dark-700 shadow-sm p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Your Pipeline Tasks</h3>
+            <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">YOUR PIPELINE TASKS</h2>
             <button
+              type="button"
               onClick={handleShareLink}
-              title="Copy shareable pipeline link"
-              className="flex items-center gap-1.5 text-xs font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 transition-colors"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline"
             >
-              <Share2 size={14} /> Share
+              <Share2 size={13} />
+              Share
             </button>
           </div>
 
-          <div className="flex flex-col relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 dark:before:via-dark-600 before:to-transparent">
-            {tasks.map((task: JobTask, index) => {
+          <div className="flex flex-col gap-4 relative">
+            {tasks.map((task, idx) => {
               const completion = completionByTaskId.get(task.id);
-              const status = completion?.status || 'not_started';
-              const { opensAtMs, deadlineMs, isClockAnchored } = computeTaskClockWindow(
-                {
-                  kind: task.kind,
-                  anchorTime: task.anchorTime,
-                  openMinutesBefore: task.openMinutesBefore,
-                  openMinutesAfter: task.openMinutesAfter,
-                  responseWindowMinutes: task.responseWindowMinutes,
-                },
-                job,
-                completion
-              );
+              const status: TaskCompletionStatus = completion?.status || 'not_started';
+              const isWorking = loadingTaskId === task.id || loadingTaskId === completion?.id;
+              const isLast = idx === tasks.length - 1;
 
-              const isWorking = loadingTaskId === task.id;
-              const isNotYetOpen = isClockAnchored && status === 'not_started' && opensAtMs !== null && now < opensAtMs;
-              const isLocked = status === 'not_started' && !isNotYetOpen;
-              const isPastResponseWindow = status === 'in_progress' && deadlineMs !== null && now > deadlineMs;
+              const isClockAnchored = task.kind === 'opening' || task.kind === 'closing' || !!task.anchorTime;
+              const clockWindow = isClockAnchored && job ? computeTaskClockWindow(task, job, completion) : null;
+              const opensAtMs = clockWindow?.opensAtMs ?? (completion?.availableAt ? new Date(completion.availableAt).getTime() : null);
+              const deadlineMs = clockWindow?.deadlineMs ?? (completion?.availableAt && task.responseWindowMinutes
+                ? new Date(completion.availableAt).getTime() + task.responseWindowMinutes * 60 * 1000
+                : null);
 
-              const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
+              const now = Date.now();
+              const isNotYetOpen = opensAtMs !== null && now < opensAtMs;
+              const isPastResponseWindow = deadlineMs !== null && now > deadlineMs;
+
+              const canAct = (status === 'in_progress' || status === 'not_started') && !isNotYetOpen && !isPastResponseWindow;
 
               return (
-                <div key={task.id} className={clsx(
-                  'relative flex items-start justify-between group mb-6 last:mb-0 transition-opacity',
-                  isLocked ? 'opacity-50 grayscale pointer-events-none' : isPastResponseWindow || isNotYetOpen ? 'opacity-60' : 'opacity-100'
-                )}>
+                <div key={task.id} className="relative flex items-start">
+                  {!isLast && (
+                    <div className="absolute left-[1.125rem] top-7 bottom-0 w-0.5 bg-slate-200 dark:bg-dark-700 -mb-4 z-0" />
+                  )}
+
                   <div className={clsx(
-                    'flex items-center justify-center w-10 h-10 rounded-full border-4 shrink-0 z-10 transition-colors',
-                    status === 'complete'
-                      ? 'bg-green-500 border-green-200 dark:border-green-900/50 text-white'
-                      : status === 'failed'
-                      ? 'bg-red-500 border-red-200 dark:border-red-900/50 text-white'
-                      : status === 'submitted' || status === 'in_progress'
-                      ? 'bg-amber-400 border-amber-100 dark:border-amber-900/50 text-white'
-                      : 'bg-white dark:bg-dark-800 border-slate-200 dark:border-dark-600 text-slate-400'
+                    'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border-2 z-10',
+                    STATUS_STYLES[status]
                   )}>
-                    {status === 'complete' ? <CheckCircle2 size={20} /> : status === 'failed' ? <XCircle size={20} /> : status === 'submitted' || status === 'in_progress' ? <Clock size={20} /> : <Circle size={20} />}
+                    {STATUS_ICONS[status]}
                   </div>
 
                   <div className="w-[calc(100%-3.5rem)] p-4 rounded-xl border border-slate-100 dark:border-dark-700 bg-white dark:bg-dark-800 shadow-sm ml-4">
@@ -323,18 +420,8 @@ export default function WorkerPipeline() {
                       <span className={clsx('font-bold text-sm', status === 'complete' ? 'text-green-600 dark:text-green-400' : 'text-slate-900 dark:text-white')}>
                         {task.title}
                       </span>
-                      {task.completionType === 'image' && <Camera size={16} className="text-slate-400" />}
-                      {task.completionType === 'form' && <Upload size={16} className="text-slate-400" />}
                     </div>
-                    {task.description && <p className="text-xs text-slate-400 mb-2">{task.description}</p>}
-
-                    {isClockAnchored && (status === 'not_started' || status === 'in_progress') && (
-                      <p className="text-[10px] font-bold text-slate-400 mb-2">
-                        {isNotYetOpen
-                          ? `Opens at ${timeLabel(opensAtMs!)}`
-                          : deadlineMs !== null && `Close by ${timeLabel(deadlineMs)}`}
-                      </p>
-                    )}
+                    {task.description && <p className="text-xs text-slate-400 mb-3">{task.description}</p>}
 
                     {isNotYetOpen && (
                       <div className="text-[10px] font-bold text-slate-500 bg-slate-50 dark:bg-dark-700 px-2 py-1 rounded inline-block">
@@ -342,35 +429,28 @@ export default function WorkerPipeline() {
                       </div>
                     )}
 
-                    {status === 'in_progress' && completion && task.completionType === 'tick' && !isPastResponseWindow && !isNotYetOpen && (
-                      <Button size="sm" className="w-full mt-2 py-1.5" onClick={() => handleTick(completion)} loading={isWorking}>
+                    {canAct && task.completionType === 'tick' && (
+                      <Button size="sm" className="w-full mt-2 py-1.5" onClick={() => handleTick(task, completion)} loading={isWorking}>
                         Mark Complete
                       </Button>
                     )}
 
-                    {status === 'in_progress' && completion && task.completionType === 'image' && !isPastResponseWindow && !isNotYetOpen && (
-                      <Button size="sm" variant="primary" className="w-full mt-2 py-1.5" onClick={() => handleOpenCamera(completion)} loading={isWorking}>
+                    {canAct && task.completionType === 'image' && (
+                      <Button size="sm" variant="primary" className="w-full mt-2 py-1.5" onClick={() => handleOpenCamera(task, completion)} loading={isWorking}>
                         Open Camera
                       </Button>
                     )}
 
-                    {status === 'in_progress' && completion && task.completionType === 'form' && !isPastResponseWindow && !isNotYetOpen && (
+                    {canAct && task.completionType === 'form' && (
                       <div className="mt-2 flex flex-col gap-2">
                         <Input
                           placeholder="Your response"
-                          value={formDrafts[completion.id] || ''}
-                          onChange={(e) => setFormDrafts((prev) => ({ ...prev, [completion.id]: e.target.value }))}
+                          value={formDrafts[completion?.id || task.id] || ''}
+                          onChange={(e) => setFormDrafts((prev) => ({ ...prev, [completion?.id || task.id]: e.target.value }))}
                         />
-                        <Button size="sm" variant="outline" className="w-full py-1.5" onClick={() => handleFormSubmit(completion)} loading={isWorking}>
+                        <Button size="sm" variant="outline" className="w-full py-1.5" onClick={() => handleFormSubmit(task, completion)} loading={isWorking}>
                           Submit
                         </Button>
-                      </div>
-                    )}
-
-                    {status === 'in_progress' && isPastResponseWindow && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
-                        <XCircle size={15} className="shrink-0" />
-                        <span>Submission time has expired ({deadlineMs !== null ? timeLabel(deadlineMs) : 'window closed'}). If you missed this with a valid reason, ask your employer to reopen the task.</span>
                       </div>
                     )}
 
@@ -380,14 +460,13 @@ export default function WorkerPipeline() {
                       </div>
                     )}
                     {status === 'complete' && (
-                      <div className="text-[10px] font-bold text-slate-500 bg-slate-50 dark:bg-dark-700 px-2 py-1 rounded inline-block mt-2">
-                        Submitted & Verified
+                      <div className="text-[10px] font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded inline-block mt-2">
+                        Verified
                       </div>
                     )}
                     {status === 'failed' && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
-                        <XCircle size={15} className="shrink-0" />
-                        <span>{completion?.rejectionReason || 'Missed the response window. Ask your employer to reopen this task.'}</span>
+                      <div className="text-[10px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded inline-block mt-2">
+                        {completion?.rejectionReason || 'Missed'}
                       </div>
                     )}
                   </div>
