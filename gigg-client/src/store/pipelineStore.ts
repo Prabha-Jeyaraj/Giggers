@@ -74,15 +74,69 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   isLoading: false,
 
   fetchJobTasks: async (jobId: string) => {
-    const res = await api.get<{ tasks: any[] }>(`/api/pipeline/jobs/${jobId}/tasks`);
-    const tasks = res.tasks.map(mapTask);
+    try {
+      const res = await api.get<{ tasks: any[] }>(`/api/pipeline/jobs/${jobId}/tasks`);
+      if (res?.tasks) {
+        const tasks = res.tasks.map(mapTask);
+        set({ tasks });
+        return tasks;
+      }
+    } catch {}
+
+    const { data: dbTasks } = await supabase
+      .from('job_tasks')
+      .select('*')
+      .eq('job_id', jobId)
+      .order('sort_order', { ascending: true });
+
+    const tasks = (dbTasks || []).map(mapTask);
     set({ tasks });
     return tasks;
   },
 
   saveJobTasks: async (jobId: string, tasks: TaskDraft[]) => {
-    const res = await api.post<{ tasks: any[] }>(`/api/pipeline/jobs/${jobId}/tasks`, { tasks });
-    set({ tasks: res.tasks.map(mapTask) });
+    // 1. Try backend API
+    try {
+      const res = await api.post<{ tasks: any[] }>(`/api/pipeline/jobs/${jobId}/tasks`, { tasks });
+      if (res?.tasks) {
+        set({ tasks: res.tasks.map(mapTask) });
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[pipelineStore] API saveJobTasks failed, falling back to direct Supabase:', err);
+    }
+
+    // 2. Direct Supabase Fallback
+    try {
+      await supabase.from('job_tasks').delete().eq('job_id', jobId);
+
+      const rowsToInsert = tasks.map((t, idx) => ({
+        job_id: jobId,
+        kind: t.kind,
+        sort_order: idx,
+        title: t.title,
+        description: t.description || '',
+        completion_type: t.completionType,
+        response_window_minutes: t.responseWindowMinutes || 15,
+        auto_fail_minutes: t.autoFailMinutes || 30,
+        open_minutes_before: t.openMinutesBefore || 15,
+        open_minutes_after: t.openMinutesAfter || 30,
+        anchor_time: t.anchorTime || null,
+        requires_review: t.requiresReview !== false,
+      }));
+
+      const { data: inserted, error } = await supabase
+        .from('job_tasks')
+        .insert(rowsToInsert)
+        .select('*')
+        .order('sort_order', { ascending: true });
+
+      if (error) throw error;
+      set({ tasks: (inserted || []).map(mapTask) });
+    } catch (dbErr) {
+      console.error('[pipelineStore] Direct Supabase saveJobTasks failed:', dbErr);
+      throw dbErr;
+    }
   },
 
   fetchCompletions: async (applicationId: string) => {
