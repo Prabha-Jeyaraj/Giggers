@@ -6,7 +6,11 @@ import { supabase } from '../../../lib/supabase';
 import type { JobTask, TaskCompletion } from '../../../types';
 import { formatTime12h } from '../../../lib/time';
 
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const BACKEND_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+    ? 'https://gigg-client-backend.onrender.com'
+    : 'http://localhost:4000');
 
 function StatusDot({ status }: { status: string | undefined }) {
   const s = status || 'not_started';
