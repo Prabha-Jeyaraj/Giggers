@@ -10,6 +10,7 @@ import { useAuthStore } from '../../../store/authStore';
 import { useUIStore } from '../../../store/uiStore';
 import { JOB_CATEGORIES } from '../constants';
 import { supabase } from '../../../lib/supabase';
+import { formatTimeString12h } from '../../../lib/time';
 
 export default function Jobs() {
   const navigate = useNavigate();
@@ -317,6 +318,7 @@ export default function Jobs() {
                             onClick={async () => {
                               const threadId = await fetchChatThreadId(app.jobId, user.id);
                               if (threadId) navigate(`/chat/${threadId}`);
+                              else addToast('Could not open chat. Please try again.', 'error');
                             }}
                             className="w-10 flex items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-100 dark:border-primary-800/30"
                           >
@@ -401,7 +403,7 @@ export default function Jobs() {
                           </div>
                           <div className="flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-dark-700 p-2.5 rounded-xl mb-3">
                             <span>{app.job.date}</span>
-                            <span>{app.job.reportingTime}</span>
+                            <span>{formatTimeString12h(app.job.reportingTime)}</span>
                           </div>
                           <div className="flex gap-2">
                             <Button

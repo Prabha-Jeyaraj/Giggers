@@ -9,6 +9,7 @@ import { useAuthStore } from '../../../store/authStore';
 import { useUIStore } from '../../../store/uiStore';
 import { supabase } from '../../../lib/supabase';
 import { api } from '../../../lib/api';
+import { formatTime12h } from '../../../lib/time';
 import { clsx } from 'clsx';
 
 interface GroupMember {
@@ -194,7 +195,11 @@ export default function GroupChat() {
 
   if (!user || !jobId) return null;
 
-  const isEmployer = job && job.employer_id === user.id;
+  // Requires the account's CURRENT role to be employer, not just historical
+  // ownership — a phone number's role can be switched on login, so someone
+  // who posted this job as an employer and is now logged in as a worker
+  // should not be able to close the team chat as if still managing it.
+  const isEmployer = Boolean(job && job.employer_id === user.id && user.role === 'employer');
   const isGroupClosed = job ? Boolean(job.is_group_closed) : false;
 
   const handleSend = async (e: React.FormEvent) => {
@@ -320,7 +325,7 @@ export default function GroupChat() {
           const senderProfile = msg.profiles;
           const rawTime = msg.createdAt || (msg as any).created_at || (msg as any).sentAt;
           const formattedTime = rawTime && !isNaN(new Date(rawTime).getTime())
-            ? new Date(rawTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            ? formatTime12h(rawTime)
             : '';
           
           return (

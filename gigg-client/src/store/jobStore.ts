@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Job, Application, Work, FilterState } from '../types';
 import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
 
 interface JobState {
   jobs: Job[];
@@ -429,6 +430,20 @@ export const useJobStore = create<JobState>((set, get) => ({
   },
 
   fetchChatThreadId: async (jobId: string, workerId: string, employerId?: string) => {
+    // 1. Backend endpoint uses the service-role client, so it isn't blocked by
+    // chat_threads RLS the way a direct anon-key insert from here would be.
+    try {
+      const res = await api.post<{ threadId: string }>('/api/chat/threads', {
+        jobId,
+        workerId,
+        employerId,
+      });
+      if (res?.threadId) return res.threadId;
+    } catch (backendErr) {
+      console.warn('[Jobs] Backend fetchChatThreadId fallback to Supabase:', backendErr);
+    }
+
+    // 2. Direct Supabase fallback
     const { data: existing } = await supabase
       .from('chat_threads')
       .select('id')

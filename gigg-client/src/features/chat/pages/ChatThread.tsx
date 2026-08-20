@@ -13,6 +13,7 @@ import { NegotiatedPayModal } from '../../jobs/components/NegotiatedPayModal';
 import { supabase } from '../../../lib/supabase';
 import { useUIStore } from '../../../store/uiStore';
 import type { Application, Job } from '../../../types';
+import { formatTime12h } from '../../../lib/time';
 import { clsx } from 'clsx';
 
 function TaskStatusIcon({ status }: { status: string }) {
@@ -172,7 +173,11 @@ export default function ChatThread() {
       : null;
 
   const effectivePay = negotiatedPay != null ? negotiatedPay : baseJobPay;
-  const isEmployer = user?.role === 'employer' || (thread && user?.id === thread.employerId);
+  // Requires the account's CURRENT role to be employer — a phone number's
+  // role can be switched on login, so someone who owns this thread as
+  // job.employerId but is now logged in as a worker should not see pay
+  // controls ("Update Worker Pay") for their own old job's chat thread.
+  const isEmployer = user?.role === 'employer' && Boolean(thread && user?.id === thread.employerId);
 
   useEffect(() => {
     if (activeTab === 'pipeline' && targetApplication) {
@@ -367,7 +372,7 @@ export default function ChatThread() {
                       msg.text
                     )}
                     <div className={`text-[9px] font-bold mt-1 flex items-center justify-end gap-1 ${isMe ? 'text-primary-100' : 'text-slate-400'}`}>
-                      <span>{new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{formatTime12h(msg.sentAt)}</span>
                       {isMe && (
                         msg.isRead || msg.readAt ? (
                           <CheckCheck size={14} className="text-cyan-300 stroke-[2.5] flex-shrink-0 drop-shadow-sm" />

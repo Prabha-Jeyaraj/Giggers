@@ -13,6 +13,7 @@ import { parseDosAndDonts } from '../constants';
 import { supabase } from '../../../lib/supabase';
 import { getPersonalizedJobBadge } from '../../../components/shared/Cards';
 import { NegotiatedPayModal } from '../components/NegotiatedPayModal';
+import { formatTimeString12h } from '../../../lib/time';
 import { clsx } from 'clsx';
 
 export default function JobDetails() {
@@ -124,6 +125,14 @@ export default function JobDetails() {
 
   // A job is the employer's job if it matches my user ID
   const isEmployerForThisJob = user && job.employerId === user.id;
+  // Stricter than isEmployerForThisJob: also requires the account's CURRENT
+  // role to be employer. A phone number's role can be switched on login
+  // (worker <-> employer), so job.employerId === user.id alone isn't enough —
+  // without this, someone who posted a job as an employer and later logs back
+  // in as a worker would still see employer-only action controls (paying
+  // workers, marking the job complete) on their old job postings. Used only
+  // to gate actions/money, not read-only info like Team Chat visibility.
+  const canManageAsEmployer = Boolean(isEmployerForThisJob && user?.role === 'employer');
   const jobApplication = user?.role === 'worker'
     ? applications.find((a) => a.jobId === job.id)
     : undefined;
@@ -385,7 +394,7 @@ export default function JobDetails() {
             <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-dark-600 flex items-center justify-center text-slate-500 flex-shrink-0"><Calendar size={18} /></div>
             <div>
               <p className="text-sm font-bold text-slate-900 dark:text-white">{job.date}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Report at {job.reportingTime}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Report at {formatTimeString12h(job.reportingTime)}</p>
             </div>
           </div>
           <div className="flex gap-4">
@@ -514,7 +523,7 @@ export default function JobDetails() {
       )}
 
       {/* Pay Hired Workers Section (Visible to Employer when job status is completed or active) */}
-      {isEmployerForThisJob && (job.status === 'completed' || hiredWorkersList.length > 0) && (
+      {canManageAsEmployer && (job.status === 'completed' || hiredWorkersList.length > 0) && (
         <div className="px-5 py-6 bg-white dark:bg-dark-800 shadow-sm mb-2 border-t border-slate-100 dark:border-dark-700">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -621,7 +630,7 @@ export default function JobDetails() {
 
       {/* Fixed Bottom Action Bar */}
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 dark:bg-dark-800/90 backdrop-blur-md border-t border-slate-100 dark:border-dark-600 z-40 max-w-lg mx-auto">
-        {isEmployerForThisJob ? (
+        {canManageAsEmployer ? (
           <div className="flex gap-3">
             <Button className="flex-1" variant="outline" onClick={() => setShowCandidatesModal(true)} rightIcon={<Users size={18} />}>
               Candidates ({jobCandidates.length || job.applicantsCount})
@@ -636,9 +645,9 @@ export default function JobDetails() {
               </Button>
             )}
           </div>
-        ) : user?.role === 'employer' ? (
+        ) : user?.role === 'employer' || isEmployerForThisJob ? (
           <div className="text-center py-2 text-sm font-bold text-slate-500 dark:text-slate-400">
-            Employers cannot apply for gigs.
+            {isEmployerForThisJob ? 'Switch to your Employer account to manage this job.' : 'Employers cannot apply for gigs.'}
           </div>
         ) : isConfirmed ? (
           <div className="flex flex-col gap-3">

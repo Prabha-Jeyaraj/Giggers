@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AppHeader } from '../../../components/layout/Navigation';
 import { Avatar, Button, Badge } from '../../../components/ui';
 import { useAuthStore } from '../../../store/authStore';
+import { useUIStore } from '../../../store/uiStore';
 import { supabase } from '../../../lib/supabase';
 import type { ApplicationStatus } from '../../../types';
 import { MessageCircle, Briefcase, Star, MapPin, User } from 'lucide-react';
@@ -30,6 +31,7 @@ interface HiredWorker {
 export default function EmployerWorkers() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const { addToast } = useUIStore();
   const { fetchChatThreadId } = useJobStore();
   const [workers, setWorkers] = useState<HiredWorker[]>([]);
   const [loading, setLoading] = useState(true);
@@ -270,6 +272,7 @@ export default function EmployerWorkers() {
                       if (!user) return;
                       const threadId = await fetchChatThreadId(application.jobId, application.workerId);
                       if (threadId) navigate(`/chat/${threadId}`);
+                      else addToast('Could not open chat. Please try again.', 'error');
                     }}
                   >
                     <MessageCircle size={16} className="mr-1.5" /> Chat
