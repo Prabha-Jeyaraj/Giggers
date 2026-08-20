@@ -37,18 +37,24 @@ export function formatTime12Hour(timeStr?: string | Date | null): string {
 export function computeTaskClockWindow(
   task: { kind: string; anchorTime?: string; openMinutesBefore?: number; openMinutesAfter?: number; responseWindowMinutes?: number },
   job?: { date?: string; reportingTime?: string; endTime?: string } | null,
-  completion?: { opensAt?: string; deadlineAt?: string; availableAt?: string; manually_reopened_at?: string } | null
+  completion?: { status?: string; opensAt?: string; deadlineAt?: string; availableAt?: string; manually_reopened_at?: string; manuallyReopenedAt?: string } | null
 ): { opensAtMs: number | null; deadlineMs: number | null; isClockAnchored: boolean } {
+  const reopenTime = completion?.manuallyReopenedAt || completion?.manually_reopened_at;
+  const openAfter = task.openMinutesAfter !== undefined ? task.openMinutesAfter : (task.responseWindowMinutes || 30);
+
   // If explicitly manually reopened
-  if (completion?.manually_reopened_at) {
-    const reopenedMs = new Date(completion.manually_reopened_at).getTime();
-    const openAfter = task.openMinutesAfter !== undefined ? task.openMinutesAfter : 30;
-    return {
-      opensAtMs: reopenedMs,
-      deadlineMs: reopenedMs + openAfter * 60_000,
-      isClockAnchored: true,
-    };
+  if (reopenTime) {
+    const reopenedMs = new Date(reopenTime).getTime();
+    if (!isNaN(reopenedMs)) {
+      return {
+        opensAtMs: reopenedMs,
+        deadlineMs: reopenedMs + openAfter * 60_000,
+        isClockAnchored: true,
+      };
+    }
   }
+
+  const availableMs = completion?.availableAt ? new Date(completion.availableAt).getTime() : null;
 
   const rawTime =
     task.kind === 'opening'
@@ -78,10 +84,21 @@ export function computeTaskClockWindow(
     const anchorDate = new Date(`${job.date}T${cleanTime}`);
     if (!Number.isNaN(anchorDate.getTime())) {
       const openBefore = task.openMinutesBefore !== undefined ? task.openMinutesBefore : 15;
-      const openAfter = task.openMinutesAfter !== undefined ? task.openMinutesAfter : 30;
+      const originalOpensAt = anchorDate.getTime() - openBefore * 60_000;
+      const originalDeadline = anchorDate.getTime() + openAfter * 60_000;
+
+      // If the employer reopened the task, availableAt is updated to now (which is after originalOpensAt)
+      if (completion?.status === 'in_progress' && availableMs && availableMs > originalDeadline) {
+        return {
+          opensAtMs: availableMs,
+          deadlineMs: availableMs + openAfter * 60_000,
+          isClockAnchored: true,
+        };
+      }
+
       return {
-        opensAtMs: anchorDate.getTime() - openBefore * 60_000,
-        deadlineMs: anchorDate.getTime() + openAfter * 60_000,
+        opensAtMs: originalOpensAt,
+        deadlineMs: originalDeadline,
         isClockAnchored: true,
       };
     }
@@ -96,7 +113,6 @@ export function computeTaskClockWindow(
     };
   }
 
-  const availableMs = completion?.availableAt ? new Date(completion.availableAt).getTime() : null;
   const responseMinutes = task.responseWindowMinutes || 15;
   return {
     opensAtMs: availableMs,

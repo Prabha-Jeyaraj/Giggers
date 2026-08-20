@@ -121,6 +121,7 @@ async function mapCompletion(row, clockWindow) {
         submittedAt: row.submitted_at || undefined,
         reviewedAt: row.reviewed_at || undefined,
         rejectionReason: row.rejection_reason || undefined,
+        manuallyReopenedAt: row.manually_reopened_at || undefined,
         opensAt: clockWindow?.opensAt.toISOString(),
         deadlineAt: clockWindow?.deadline.toISOString(),
     };
@@ -532,7 +533,7 @@ async function checkClockWindowOpen(completion) {
         return null;
     const now = Date.now();
     if (now < window.opensAt.getTime()) {
-        return `This task opens at ${window.opensAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+        return `This task opens at ${window.opensAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
     }
     if (now > window.deadline.getTime()) {
         return 'The window for this task has closed';

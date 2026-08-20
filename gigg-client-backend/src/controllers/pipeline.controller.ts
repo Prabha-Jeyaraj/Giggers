@@ -112,6 +112,7 @@ async function mapCompletion(row: Record<string, any>, clockWindow?: { opensAt: 
     submittedAt: row.submitted_at || undefined,
     reviewedAt: row.reviewed_at || undefined,
     rejectionReason: row.rejection_reason || undefined,
+    manuallyReopenedAt: row.manually_reopened_at || undefined,
     opensAt: clockWindow?.opensAt.toISOString(),
     deadlineAt: clockWindow?.deadline.toISOString(),
   };
