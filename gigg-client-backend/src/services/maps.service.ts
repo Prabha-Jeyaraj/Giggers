@@ -18,6 +18,17 @@ export interface GeocodeResult {
 
 // Reverse geocode lat/lng → address components
 export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeResult> {
+  // Direct Anna University campus detection
+  if (lat >= 13.004 && lat <= 13.020 && lng >= 80.230 && lng <= 80.246) {
+    return {
+      formattedAddress: 'Anna University Campus, Sardar Patel Road, Guindy, Chennai',
+      lat,
+      lng,
+      city: 'Chennai',
+      area: 'Guindy',
+    };
+  }
+
   const { data } = await axios.get(`${GMAPS_BASE}/geocode/json`, {
     params: { latlng: `${lat},${lng}`, key: API_KEY() },
   });
@@ -34,12 +45,17 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeR
     }
   }
 
+  let formatted = result.formatted_address || '';
+  if (/alagappa\s*college|anna\s*univ|ceg|atumx/i.test(formatted)) {
+    formatted = 'Anna University Campus, Sardar Patel Road, Guindy, Chennai';
+  }
+
   return {
-    formattedAddress: result.formatted_address,
+    formattedAddress: formatted,
     lat,
     lng,
-    city: components['locality'] || components['administrative_area_level_2'] || '',
-    area: components['sublocality_level_1'] || components['sublocality'] || components['neighborhood'] || '',
+    city: components['locality'] || components['administrative_area_level_2'] || 'Chennai',
+    area: components['sublocality_level_1'] || components['sublocality'] || components['neighborhood'] || 'Guindy',
   };
 }
 

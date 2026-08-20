@@ -866,27 +866,55 @@ export async function getPublicPipeline(req: any, res: any): Promise<void> {
   let isSingleWorker = false;
   let singleWorkerApp: any = null;
 
-  // Check if shareToken matches an application ID or application share token
-  const { data: matchedApp } = await supabase
+  // 1. Check if shareToken matches an application ID directly
+  const { data: appById } = await supabase
     .from('applications')
     .select('id, job_id, worker_id, status')
-    .or(`id.eq.${shareToken},pipeline_share_token.eq.${shareToken}`)
-    .limit(1)
+    .eq('id', shareToken)
     .maybeSingle();
 
-  if (matchedApp) {
+  if (appById) {
     isSingleWorker = true;
-    singleWorkerApp = matchedApp;
+    singleWorkerApp = appById;
+  } else {
+    // Fallback: check if shareToken is a custom application token
+    try {
+      const { data: appByToken } = await supabase
+        .from('applications')
+        .select('id, job_id, worker_id, status')
+        .eq('pipeline_share_token', shareToken)
+        .maybeSingle();
+      if (appByToken) {
+        isSingleWorker = true;
+        singleWorkerApp = appByToken;
+      }
+    } catch {}
   }
 
-  // Resolve the job by ID or share token
-  const jobIdToFind = isSingleWorker ? singleWorkerApp.job_id : null;
-  const { data: job } = await supabase
+  // 2. Resolve the job
+  let job: any = null;
+  const jobIdToFind = isSingleWorker ? singleWorkerApp.job_id : shareToken;
+
+  const { data: jobById } = await supabase
     .from('jobs')
-    .select('id, title, location, pipeline_share_token')
-    .or(jobIdToFind ? `id.eq.${jobIdToFind}` : `pipeline_share_token.eq.${shareToken},id.eq.${shareToken}`)
-    .limit(1)
+    .select('id, title, location')
+    .eq('id', jobIdToFind)
     .maybeSingle();
+
+  if (jobById) {
+    job = jobById;
+  } else {
+    try {
+      const { data: jobByToken } = await supabase
+        .from('jobs')
+        .select('id, title, location')
+        .eq('pipeline_share_token', shareToken)
+        .maybeSingle();
+      if (jobByToken) {
+        job = jobByToken;
+      }
+    } catch {}
+  }
 
   if (!job) {
     res.status(404).json({ message: 'Pipeline not found or link is invalid' });

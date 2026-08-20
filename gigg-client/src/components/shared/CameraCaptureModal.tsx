@@ -17,15 +17,50 @@ interface CameraCaptureModalProps {
   jobLocation?: string;
 }
 
+function cleanAddressString(raw: string, lat: number, lng: number): string {
+  // Check if within Anna University Main / ACTech / CEG / Guindy campus zone
+  const isAnnaUnivZone =
+    (lat >= 13.004 && lat <= 13.020 && lng >= 80.230 && lng <= 80.246) ||
+    /alagappa\s*college|anna\s*univ|ceg|atumx|au-tbi/i.test(raw);
+
+  if (isAnnaUnivZone) {
+    return 'Anna University Campus, Sardar Patel Road, Guindy, Chennai';
+  }
+
+  // Remove noise like "CMWSSB Division \d+", "Ward \d+", "Zone \d+", "Chennai Corporation"
+  const cleaned = raw
+    .replace(/CMWSSB\s*Division\s*\d+,?/gi, '')
+    .replace(/Ward\s*\d+,?/gi, '')
+    .replace(/Zone\s*\d+[^,]+,?/gi, '')
+    .replace(/Chennai\s*Corporation,?/gi, '')
+    .replace(/,\s*,/g, ',')
+    .replace(/^,\s*|,\s*$/g, '')
+    .trim();
+
+  const parts = cleaned.split(',').map((s) => s.trim()).filter(Boolean);
+  const filtered = parts.filter((p) => !/^(CMWSSB|Ward|Zone|Tamil Nadu|India|\d{6})/i.test(p));
+  return (filtered.slice(0, 3).join(', ') || parts.slice(0, 3).join(', ') || `${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+}
+
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  // Check Anna University Campus zone directly from coordinates
+  if (lat >= 13.004 && lat <= 13.020 && lng >= 80.230 && lng <= 80.246) {
+    return 'Anna University Campus, Sardar Patel Road, Guindy, Chennai';
+  }
+
   // 1. Try Google Maps reverse-geocoding via backend (with auth)
   try {
     const data = await api.get<{ formattedAddress?: string; area?: string; city?: string }>(
       '/api/maps/reverse-geocode',
       { lat: String(lat), lng: String(lng) }
     );
-    if (data?.formattedAddress) return data.formattedAddress;
-    if (data?.area) return [data.area, data.city].filter(Boolean).join(', ');
+    if (data?.formattedAddress) {
+      return cleanAddressString(data.formattedAddress, lat, lng);
+    }
+    if (data?.area) {
+      const addr = [data.area, data.city].filter(Boolean).join(', ');
+      return cleanAddressString(addr, lat, lng);
+    }
   } catch {}
 
   // 2. Fallback to OpenStreetMap Nominatim with detailed address structure
@@ -44,12 +79,8 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
       const city = addr.city || addr.town || addr.county || '';
 
       const parts = [landmark, road, neighborhood, city].filter(Boolean);
-      const uniqueParts = Array.from(new Set(parts));
-
-      if (uniqueParts.length > 0) {
-        return uniqueParts.join(', ');
-      }
-      return data.display_name?.split(',').slice(0, 3).join(', ') || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      const combined = parts.join(', ') || data.display_name || '';
+      return cleanAddressString(combined, lat, lng);
     }
   } catch {}
 
