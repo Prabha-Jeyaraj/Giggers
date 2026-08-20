@@ -257,6 +257,7 @@ export interface TaskCompletion {
   /** Set only for opening/closing (clock-anchored) tasks — the job-clock-derived open/deadline instants. */
   opensAt?: string;
   deadlineAt?: string;
+  manuallyReopenedAt?: string;
 }
 
 export interface JobClient {

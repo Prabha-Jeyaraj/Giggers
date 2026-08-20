@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, XCircle, UserSquare2, RefreshCw, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { supabase } from '../../../lib/supabase';
 import type { JobTask, TaskCompletion } from '../../../types';
@@ -50,6 +50,7 @@ export default function PublicPipelineView() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const fetchData = async (token: string) => {
@@ -74,25 +75,44 @@ export default function PublicPipelineView() {
       let singleWorkerApp: any = null;
 
       // Check if token matches an application ID or pipeline_share_token
-      const { data: appById } = await supabase
+      let { data: appById } = await supabase
         .from('applications')
         .select('id, job_id, worker_id, status')
         .eq('id', token)
         .maybeSingle();
+
+      if (!appById) {
+        try {
+          const { data: appByTok } = await supabase
+            .from('applications')
+            .select('id, job_id, worker_id, status')
+            .eq('pipeline_share_token', token)
+            .maybeSingle();
+          if (appByTok) appById = appByTok;
+        } catch {}
+      }
 
       if (appById) {
         isSingleWorker = true;
         singleWorkerApp = appById;
       }
 
-      const jobIdToFind = isSingleWorker ? singleWorkerApp.job_id : token;
-
-      // Query job
-      const { data: job } = await supabase
-        .from('jobs')
-        .select('*')
-        .eq('id', jobIdToFind)
-        .maybeSingle();
+      // Query job by id or pipeline_share_token
+      let job: any = null;
+      if (isSingleWorker && singleWorkerApp) {
+        const { data: j } = await supabase.from('jobs').select('*').eq('id', singleWorkerApp.job_id).maybeSingle();
+        job = j;
+      } else {
+        const { data: jById } = await supabase.from('jobs').select('*').eq('id', token).maybeSingle();
+        if (jById) {
+          job = jById;
+        } else {
+          try {
+            const { data: jByTok } = await supabase.from('jobs').select('*').eq('pipeline_share_token', token).maybeSingle();
+            if (jByTok) job = jByTok;
+          } catch {}
+        }
+      }
 
       if (!job) {
         setError('Pipeline link not found');
@@ -176,19 +196,40 @@ export default function PublicPipelineView() {
           .select('*')
           .eq('application_id', a.id);
 
-        const mappedCompletions: TaskCompletion[] = (completions || []).map((c: any) => ({
-          id: c.id,
-          applicationId: c.application_id,
-          jobTaskId: c.job_task_id,
-          status: c.status,
-          imageUrl: c.image_path ? supabase.storage.from('task_photos').getPublicUrl(c.image_path).data.publicUrl : undefined,
-          formData: c.form_data || undefined,
-          availableAt: c.available_at || undefined,
-          submittedAt: c.submitted_at || undefined,
-          reviewedAt: c.reviewed_at || undefined,
-          rejectionReason: c.rejection_reason || undefined,
-          manuallyReopenedAt: c.manually_reopened_at || undefined,
-        }));
+        const mappedCompletions: TaskCompletion[] = [];
+        for (const c of completions || []) {
+          let resolvedImageUrl: string | undefined = undefined;
+          if (c.image_path) {
+            if (/^(https?:|data:)/.test(c.image_path)) {
+              resolvedImageUrl = c.image_path;
+            } else {
+              try {
+                const { data: signed } = await supabase.storage.from('pipeline-task-images').createSignedUrl(c.image_path, 86400);
+                resolvedImageUrl = signed?.signedUrl;
+              } catch {}
+              if (!resolvedImageUrl) {
+                try {
+                  const { data: signedKyc } = await supabase.storage.from('kyc-documents').createSignedUrl(c.image_path, 86400);
+                  resolvedImageUrl = signedKyc?.signedUrl;
+                } catch {}
+              }
+            }
+          }
+
+          mappedCompletions.push({
+            id: c.id,
+            applicationId: c.application_id,
+            jobTaskId: c.job_task_id,
+            status: c.status,
+            imageUrl: resolvedImageUrl,
+            formData: c.form_data || undefined,
+            availableAt: c.available_at || undefined,
+            submittedAt: c.submitted_at || undefined,
+            reviewedAt: c.reviewed_at || undefined,
+            rejectionReason: c.rejection_reason || undefined,
+            manuallyReopenedAt: c.manually_reopened_at || undefined,
+          });
+        }
 
         workerRows.push({
           applicationId: a.id,
@@ -415,16 +456,20 @@ export default function PublicPipelineView() {
                         {statusLabel(s)}
                       </span>
 
-                      {/* Show geo-tagged image thumbnail if submitted — links to full size */}
+                      {/* Show geo-tagged image thumbnail if submitted — opens fullscreen lightbox */}
                       {completion?.imageUrl && (
-                        <a href={completion.imageUrl} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedImage(completion.imageUrl || null)}
+                          className="ml-2 shrink-0 group focus:outline-none"
+                          title="Click to view full geo-tagged photo"
+                        >
                           <img
                             src={completion.imageUrl}
                             alt="Geo-tagged proof"
-                            className="w-12 h-12 rounded-lg object-cover ring-2 ring-emerald-500/40 hover:ring-emerald-400 transition-all"
-                            title="Click to view full geo-tagged photo"
+                            className="w-12 h-12 rounded-lg object-cover ring-2 ring-emerald-500/40 group-hover:ring-emerald-400 group-hover:scale-105 transition-all shadow-md"
                           />
-                        </a>
+                        </button>
                       )}
                     </div>
                   );
@@ -439,6 +484,32 @@ export default function PublicPipelineView() {
           <p className="text-slate-600 text-[11px] font-bold tracking-wider">Powered by GIGGERS</p>
         </div>
       </div>
+
+      {/* Fullscreen Photo Lightbox Modal */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div
+            className="relative max-w-3xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex flex-col items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/70 text-white hover:bg-black flex items-center justify-center transition-colors shadow-lg border border-white/20"
+              title="Close image"
+            >
+              <X size={20} />
+            </button>
+            <img
+              src={selectedImage}
+              alt="Geo-tagged verification proof"
+              className="max-w-full max-h-[85vh] object-contain rounded-xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
