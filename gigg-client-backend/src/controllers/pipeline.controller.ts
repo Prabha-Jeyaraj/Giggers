@@ -36,22 +36,66 @@ function mapTask(row: Record<string, any>) {
  * reopen instant, so a task whose original clock deadline already passed
  * gets a genuinely fresh window instead of being auto-failed again on the
  * very next read. */
+function parseJobDateTime(dateStr: string, timeStr: string): Date | null {
+  if (!dateStr || !timeStr) return null;
+  let cleanTime = timeStr.trim();
+
+  // If in 12-hour format e.g. "02:30 PM" or "2:30pm"
+  const match12 = cleanTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (match12) {
+    let hours = parseInt(match12[1], 10);
+    const minutes = match12[2];
+    const isPm = match12[4].toLowerCase() === 'pm';
+    if (isPm && hours < 12) hours += 12;
+    if (!isPm && hours === 12) hours = 0;
+    cleanTime = `${String(hours).padStart(2, '0')}:${minutes}:00`;
+  } else {
+    const parts = cleanTime.split(':');
+    if (parts.length === 2) {
+      cleanTime = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+    }
+  }
+
+  // Treat as Indian Standard Time (IST, UTC+05:30)
+  const isoWithTz = `${dateStr}T${cleanTime}+05:30`;
+  const d = new Date(isoWithTz);
+  if (!Number.isNaN(d.getTime())) return d;
+
+  const fallback = new Date(`${dateStr}T${cleanTime}`);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/** A task is clock-anchored to a specific time-of-day on the job's date
+ * instead of "whenever the worker opens the task": opening tasks anchor to
+ * job.reporting_time, closing tasks to job.end_time, and middle 'task' rows
+ * anchor to their own task.anchor_time if the employer set one (otherwise
+ * they keep the old relative-timer behavior — see the null return below).
+ * Returns the open/deadline instants for that anchor, or null if the task
+ * isn't clock-anchored or the anchor time is missing.
+ *
+ * If `completion.manually_reopened_at` is set (employer emergency reopen —
+ * see employerReopenTask), the window is instead computed relative to that
+ * reopen instant, so a task whose original clock deadline already passed
+ * gets a genuinely fresh window instead of being auto-failed again on the
+ * very next read. */
 function clockWindowFor(task: Record<string, any>, job: Record<string, any>, completion?: Record<string, any>): { opensAt: Date; deadline: Date } | null {
-  const time = task.kind === 'opening' ? job.reporting_time : task.kind === 'closing' ? job.end_time : task.anchor_time;
-  if (!time) return null;
+  const time = task.kind === 'opening' ? job.reporting_time : task.kind === 'closing' ? (job.end_time || job.reporting_time) : task.anchor_time;
+  if (!time || !job.date) return null;
 
   if (completion?.manually_reopened_at) {
     const reopenedAt = new Date(completion.manually_reopened_at);
-    return { opensAt: reopenedAt, deadline: new Date(reopenedAt.getTime() + task.open_minutes_after * 60_000) };
+    const openAfter = task.open_minutes_after !== undefined ? task.open_minutes_after : 30;
+    return { opensAt: reopenedAt, deadline: new Date(reopenedAt.getTime() + openAfter * 60_000) };
   }
 
-  if (!job.date) return null;
+  const anchor = parseJobDateTime(job.date, time);
+  if (!anchor) return null;
 
-  const anchor = new Date(`${job.date}T${time}`);
-  if (Number.isNaN(anchor.getTime())) return null;
+  const openBefore = task.open_minutes_before !== undefined ? task.open_minutes_before : 15;
+  const openAfter = task.open_minutes_after !== undefined ? task.open_minutes_after : 30;
 
-  const opensAt = new Date(anchor.getTime() - task.open_minutes_before * 60_000);
-  const deadline = new Date(anchor.getTime() + task.open_minutes_after * 60_000);
+  const opensAt = new Date(anchor.getTime() - openBefore * 60_000);
+  const deadline = new Date(anchor.getTime() + openAfter * 60_000);
   return { opensAt, deadline };
 }
 
@@ -166,6 +210,7 @@ async function wakeClockAnchoredTasks(completions: Record<string, any>[], tasks:
 // GET /api/pipeline/jobs/:jobId/tasks
 export async function listJobTasks(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { jobId } = req.params;
+  await seedLegacyTasksIfMissing(jobId);
   const { data, error } = await supabase
     .from('job_tasks')
     .select('*')
@@ -361,36 +406,54 @@ async function authorizeCompletionAccess(req: AuthenticatedRequest, applicationI
   return { ok: false, isWorker: false, isEmployer: false };
 }
 
-const LEGACY_SEED_TASKS = [
-  { kind: 'opening' as const, title: 'Reporting', description: 'Report at the venue on time', completion_type: 'tick' as const },
-  { kind: 'task' as const, title: 'Take Selfie', description: 'Live tracking selfie at the venue', completion_type: 'image' as const },
-  { kind: 'task' as const, title: 'Check T-Shirt', description: 'Confirm uniform t-shirt', completion_type: 'image' as const },
-  { kind: 'closing' as const, title: 'Shoes Check', description: 'Confirm black shoes and close out', completion_type: 'image' as const },
+const DEFAULT_SEED_TASKS = [
+  {
+    kind: 'opening' as const,
+    title: 'Confirm Arrival',
+    description: 'Upload a photo showing you have arrived at the venue.',
+    completion_type: 'image' as const,
+    response_window_minutes: 5,
+    auto_fail_minutes: 10,
+    open_minutes_before: 10,
+    open_minutes_after: 30,
+    requires_review: true,
+  },
+  {
+    kind: 'closing' as const,
+    title: 'Confirm Checkout',
+    description: 'Upload a photo before you leave the venue.',
+    completion_type: 'image' as const,
+    response_window_minutes: 5,
+    auto_fail_minutes: 10,
+    open_minutes_before: 10,
+    open_minutes_after: 30,
+    requires_review: true,
+  },
 ];
 
-/** Jobs created before the custom-pipeline feature shipped have no
- * job_tasks rows. Seed them once, lazily, with the legacy fixed 4-step
- * list so old/in-flight jobs keep working under the new pipeline UI. */
+/** Jobs that have no job_tasks rows lazily receive the standard
+ * opening (Confirm Arrival) and closing (Confirm Checkout) tasks
+ * so the pipeline is always visible, interactive, and functional. */
 async function seedLegacyTasksIfMissing(jobId: string) {
-  const { data: job } = await supabase.from('jobs').select('created_at').eq('id', jobId).single();
-  if (!job) return;
+  const { count } = await supabase
+    .from('job_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('job_id', jobId);
 
-  // Only seed legacy tasks for jobs created before we shipped the custom pipeline builder
-  if (new Date(job.created_at) >= new Date('2026-07-21T00:00:00.000Z')) {
-    return;
-  }
-
-  const { count } = await supabase.from('job_tasks').select('id', { count: 'exact', head: true }).eq('job_id', jobId);
   if (count && count > 0) return;
 
-  const rows = LEGACY_SEED_TASKS.map((t, i) => ({
+  const rows = DEFAULT_SEED_TASKS.map((t, i) => ({
     job_id: jobId,
     kind: t.kind,
     sort_order: i,
     title: t.title,
     description: t.description,
     completion_type: t.completion_type,
-    requires_review: true,
+    response_window_minutes: t.response_window_minutes,
+    auto_fail_minutes: t.auto_fail_minutes,
+    open_minutes_before: t.open_minutes_before,
+    open_minutes_after: t.open_minutes_after,
+    requires_review: t.requires_review,
   }));
   await supabase.from('job_tasks').insert(rows);
 }

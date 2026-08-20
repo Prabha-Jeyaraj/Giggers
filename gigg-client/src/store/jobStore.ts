@@ -440,7 +440,7 @@ export const useJobStore = create<JobState>((set, get) => ({
       });
       if (res?.threadId) return res.threadId;
     } catch (backendErr) {
-      console.warn('[Jobs] Backend fetchChatThreadId fallback to Supabase:', backendErr);
+      console.warn('[jobStore] Backend fetchChatThreadId fallback to Supabase:', backendErr);
     }
 
     // 2. Direct Supabase fallback

@@ -94,8 +94,47 @@ export default function WorkerPipeline() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!job || !application || isLoading) {
-    return <div className="p-5 text-center mt-20 font-bold dark:text-white">Loading job...</div>;
+  useEffect(() => {
+    if (user?.role === 'employer' && jobId) {
+      navigate(`/client-pipeline/${jobId}`, { replace: true });
+    }
+  }, [user?.role, jobId, navigate]);
+
+  if (user?.role === 'employer') {
+    return null;
+  }
+
+  if (isLoading && !job) {
+    return (
+      <div className="p-5 text-center mt-20 font-bold dark:text-white flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+        <span>Loading pipeline...</span>
+      </div>
+    );
+  }
+
+  if (!job) {
+    return (
+      <div className="p-5 text-center mt-20 font-bold dark:text-white">
+        <p className="text-slate-500 mb-3">Job details could not be found.</p>
+        <Button onClick={() => navigate('/jobs')}>Back to Gigs</Button>
+      </div>
+    );
+  }
+
+  if (!application) {
+    return (
+      <div className="p-5 text-center mt-20 font-bold dark:text-white max-w-sm mx-auto flex flex-col items-center gap-3">
+        <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-500 flex items-center justify-center text-xl">
+          ⏳
+        </div>
+        <h3 className="text-base font-extrabold text-slate-900 dark:text-white">Application Required</h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+          The live pipeline unlocks once you apply and are confirmed for this gig.
+        </p>
+        <Button onClick={() => navigate(`/jobs/${jobId}`)}>View Gig Details</Button>
+      </div>
+    );
   }
 
   const completionByTaskId = new Map(completions.map((c) => [c.jobTaskId, c]));
@@ -220,7 +259,7 @@ export default function WorkerPipeline() {
                 : null;
               const isPastResponseWindow = status === 'in_progress' && deadlineMs !== null && now > deadlineMs;
 
-              const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+              const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
 
               return (
                 <div key={task.id} className={clsx(

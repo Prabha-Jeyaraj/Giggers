@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import type { Job, UserProfile } from '../../types/index';
 import { Badge, Avatar, Rating } from '../ui';
 import { MapPin, Clock, Users, Utensils, Shield, Star, Bookmark } from 'lucide-react';
+import { formatTime12Hour } from '../../utils/formatters';
 
 // ============================================================
 // JOB CARD
@@ -90,7 +91,7 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onClick, onSave, saved, v
           <p className="text-white/70 text-xs font-semibold mb-3">{job.employerName}</p>
           <div className="flex items-center gap-3 text-white/80 text-xs font-semibold mb-4">
             <span className="flex items-center gap-1"><MapPin size={11} /> {job.location}</span>
-            <span className="flex items-center gap-1"><Clock size={11} /> {job.reportingTime}</span>
+            <span className="flex items-center gap-1"><Clock size={11} /> {formatTime12Hour(job.reportingTime)}</span>
           </div>
           <div className="flex items-center justify-between">
             <div>
@@ -156,7 +157,7 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onClick, onSave, saved, v
           </div>
           <div className="flex items-center gap-3 mt-2 text-xs text-slate-500 dark:text-slate-400 font-medium flex-wrap">
             <span className="flex items-center gap-1"><MapPin size={11} /> {job.location}</span>
-            <span className="flex items-center gap-1"><Clock size={11} /> {job.reportingTime}</span>
+            <span className="flex items-center gap-1"><Clock size={11} /> {formatTime12Hour(job.reportingTime)}</span>
             <span className="flex items-center gap-1"><Users size={11} /> {job.workersNeeded - job.workersHired} left</span>
           </div>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
