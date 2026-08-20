@@ -27,6 +27,7 @@ function statusLabel(status: string | undefined) {
 
 interface WorkerRow {
   applicationId: string;
+  workerId?: string;
   workerName: string;
   workerAvatar?: string;
   tasks: JobTask[];
@@ -52,18 +53,168 @@ export default function PublicPipelineView() {
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const fetchData = async (token: string) => {
+    // 1. Try backend endpoint first
     try {
       const res = await fetch(`${BACKEND_URL}/api/pipeline/public/${token}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Not found');
+      if (res.ok) {
+        const json: ShareData = await res.json();
+        if (json?.jobTitle && json?.workers) {
+          setData(json);
+          setLastUpdated(new Date());
+          setError(null);
+          setIsLoading(false);
+          return;
+        }
       }
-      const json: ShareData = await res.json();
-      setData(json);
+    } catch {}
+
+    // 2. Direct Supabase Fallback
+    try {
+      let isSingleWorker = false;
+      let singleWorkerApp: any = null;
+
+      // Check if token matches an application ID or pipeline_share_token
+      const { data: appById } = await supabase
+        .from('applications')
+        .select('id, job_id, worker_id, status')
+        .eq('id', token)
+        .maybeSingle();
+
+      if (appById) {
+        isSingleWorker = true;
+        singleWorkerApp = appById;
+      }
+
+      const jobIdToFind = isSingleWorker ? singleWorkerApp.job_id : token;
+
+      // Query job
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobIdToFind)
+        .maybeSingle();
+
+      if (!job) {
+        setError('Pipeline link not found');
+        setIsLoading(false);
+        return;
+      }
+
+      // Query tasks
+      const { data: rawTasks } = await supabase
+        .from('job_tasks')
+        .select('*')
+        .eq('job_id', job.id)
+        .order('sort_order', { ascending: true });
+
+      const fallbackTasks: JobTask[] = [
+        {
+          id: `default-opening-${job.id}`,
+          jobId: job.id,
+          kind: 'opening',
+          sortOrder: 0,
+          title: 'Confirm Arrival',
+          description: 'Upload a photo showing you have arrived at the venue.',
+          completionType: 'image',
+          responseWindowMinutes: 15,
+          autoFailMinutes: 30,
+          openMinutesBefore: 15,
+          openMinutesAfter: 30,
+          requiresReview: true,
+        },
+        {
+          id: `default-closing-${job.id}`,
+          jobId: job.id,
+          kind: 'closing',
+          sortOrder: 1,
+          title: 'Confirm Checkout',
+          description: 'Upload a photo before you leave the venue.',
+          completionType: 'image',
+          responseWindowMinutes: 15,
+          autoFailMinutes: 30,
+          openMinutesBefore: 15,
+          openMinutesAfter: 30,
+          requiresReview: true,
+        },
+      ];
+
+      const tasks: JobTask[] = (rawTasks && rawTasks.length > 0)
+        ? rawTasks.map((t: any) => ({
+            id: t.id,
+            jobId: t.job_id,
+            kind: t.kind,
+            sortOrder: t.sort_order,
+            title: t.title,
+            description: t.description,
+            completionType: t.completion_type,
+            responseWindowMinutes: t.response_window_minutes,
+            autoFailMinutes: t.auto_fail_minutes,
+            openMinutesBefore: t.open_minutes_before,
+            openMinutesAfter: t.open_minutes_after,
+            requiresReview: t.requires_review,
+          }))
+        : fallbackTasks;
+
+      // Query applications
+      let appsQuery = supabase.from('applications').select('id, worker_id, status').eq('job_id', job.id);
+      if (isSingleWorker && singleWorkerApp) {
+        appsQuery = appsQuery.eq('id', singleWorkerApp.id);
+      }
+
+      const { data: apps } = await appsQuery;
+      const workerRows: WorkerRow[] = [];
+
+      for (const a of apps || []) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('name, avatar, selfie_url')
+          .eq('id', a.worker_id)
+          .maybeSingle();
+
+        const { data: completions } = await supabase
+          .from('application_task_completions')
+          .select('*')
+          .eq('application_id', a.id);
+
+        const mappedCompletions: TaskCompletion[] = (completions || []).map((c: any) => ({
+          id: c.id,
+          applicationId: c.application_id,
+          jobTaskId: c.job_task_id,
+          status: c.status,
+          imageUrl: c.image_path ? supabase.storage.from('task_photos').getPublicUrl(c.image_path).data.publicUrl : undefined,
+          formData: c.form_data || undefined,
+          availableAt: c.available_at || undefined,
+          submittedAt: c.submitted_at || undefined,
+          reviewedAt: c.reviewed_at || undefined,
+          rejectionReason: c.rejection_reason || undefined,
+          manuallyReopenedAt: c.manually_reopened_at || undefined,
+        }));
+
+        workerRows.push({
+          applicationId: a.id,
+          workerId: a.worker_id,
+          workerName: profile?.name || 'Worker',
+          workerAvatar: profile?.avatar || profile?.selfie_url || undefined,
+          tasks,
+          completions: mappedCompletions,
+        });
+      }
+
+      const singleName = isSingleWorker && workerRows[0] ? workerRows[0].workerName : undefined;
+      setData({
+        jobTitle: job.title,
+        jobLocation: job.location || '',
+        jobId: job.id,
+        isSingleWorker,
+        singleWorkerName: singleName,
+        pageTitle: isSingleWorker ? `${singleName || 'Worker'}'s Pipeline — ${job.title}` : `Live Pipeline — ${job.title}`,
+        workers: workerRows,
+      });
       setLastUpdated(new Date());
       setError(null);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load pipeline');
+    } catch (dbErr: any) {
+      console.error('Failed to load public pipeline fallback:', dbErr);
+      setError(dbErr.message || 'Failed to load pipeline');
     } finally {
       setIsLoading(false);
     }

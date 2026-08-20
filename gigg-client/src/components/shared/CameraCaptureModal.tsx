@@ -25,6 +25,8 @@ function cleanAddressString(raw: string, lat: number, lng: number): string {
     .replace(/Zone\s*\d+[^,]+,?/gi, '')
     .replace(/Chennai\s*Corporation,?/gi, '')
     .replace(/\b\d{6}\b,?/g, '')
+    .replace(/Alagappa\s*College\s*of\s*Technology/gi, 'Anna University Campus')
+    .replace(/College\s*of\s*Engineering\s*Guindy/gi, 'Anna University Campus')
     .replace(/,\s*,/g, ',')
     .replace(/^,\s*|,\s*$/g, '')
     .trim();
@@ -60,10 +62,17 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
       const data = await res.json();
       const addr = data.address || {};
       
-      const landmark = addr.university || addr.college || addr.school || addr.hospital || addr.amenity || addr.building || addr.office;
+      let landmark = addr.university || addr.amenity || addr.building;
+      if (!landmark && addr.college) {
+        if (/alagappa|actech|ceg|engineering/i.test(addr.college)) {
+          landmark = 'Anna University Campus';
+        } else {
+          landmark = addr.college;
+        }
+      }
       const road = addr.road || addr.street;
       const neighborhood = addr.neighbourhood || addr.suburb || addr.city_district || addr.subdivision;
-      const city = addr.city || addr.town || addr.county || '';
+      const city = addr.city || addr.town || addr.county || 'Chennai';
 
       const parts = [landmark, road, neighborhood, city].filter(Boolean);
       const combined = parts.join(', ') || data.display_name || '';

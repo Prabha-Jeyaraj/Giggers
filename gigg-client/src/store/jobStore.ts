@@ -430,8 +430,19 @@ export const useJobStore = create<JobState>((set, get) => ({
   },
 
   fetchChatThreadId: async (jobId: string, workerId: string, employerId?: string) => {
-    // 1. Backend endpoint uses the service-role client, so it isn't blocked by
-    // chat_threads RLS the way a direct anon-key insert from here would be.
+    // 0. Direct check for existing thread in Supabase first (instant)
+    try {
+      const { data: existing } = await supabase
+        .from('chat_threads')
+        .select('id')
+        .eq('job_id', jobId)
+        .eq('worker_id', workerId)
+        .maybeSingle();
+
+      if (existing?.id) return existing.id;
+    } catch {}
+
+    // 1. Backend endpoint uses the service-role client
     try {
       const res = await api.post<{ threadId: string }>('/api/chat/threads', {
         jobId,
@@ -444,19 +455,14 @@ export const useJobStore = create<JobState>((set, get) => ({
     }
 
     // 2. Direct Supabase fallback
-    const { data: existing } = await supabase
-      .from('chat_threads')
-      .select('id')
-      .eq('job_id', jobId)
-      .eq('worker_id', workerId)
-      .maybeSingle();
-
-    if (existing?.id) return existing.id;
-
     let empId = employerId;
     if (!empId) {
-      const { data: j } = await supabase.from('jobs').select('employer_id').eq('id', jobId).single();
+      const { data: j } = await supabase.from('jobs').select('employer_id').eq('id', jobId).maybeSingle();
       empId = j?.employer_id;
+      if (!empId) {
+        const { data: app } = await supabase.from('applications').select('jobs(employer_id)').eq('job_id', jobId).maybeSingle();
+        empId = (app as any)?.jobs?.employer_id;
+      }
     }
 
     if (!empId) return null;
@@ -468,7 +474,7 @@ export const useJobStore = create<JobState>((set, get) => ({
         { onConflict: 'job_id,worker_id' }
       )
       .select('id')
-      .single();
+      .maybeSingle();
 
     return newThread?.id ?? null;
   },

@@ -302,6 +302,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   getOrCreateThread: async (jobId: string, workerId: string, employerId?: string) => {
+    // 0. Check existing thread in Supabase first (instant resolution)
+    try {
+      const { data: existing } = await supabase
+        .from('chat_threads')
+        .select('id')
+        .eq('job_id', jobId)
+        .eq('worker_id', workerId)
+        .maybeSingle();
+
+      if (existing?.id) return existing.id;
+    } catch {}
+
     // 1. Try backend endpoint first (uses service role, no RLS issue)
     try {
       const res = await api.post<{ threadId: string }>('/api/chat/threads', {
@@ -319,16 +331,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!effectiveEmployerId) {
       const { data: job } = await supabase.from('jobs').select('employer_id').eq('id', jobId).maybeSingle();
       effectiveEmployerId = job?.employer_id;
+      if (!effectiveEmployerId) {
+        const { data: app } = await supabase.from('applications').select('jobs(employer_id)').eq('job_id', jobId).maybeSingle();
+        effectiveEmployerId = (app as any)?.jobs?.employer_id;
+      }
     }
-
-    const { data: existing } = await supabase
-      .from('chat_threads')
-      .select('id')
-      .eq('job_id', jobId)
-      .eq('worker_id', workerId)
-      .maybeSingle();
-
-    if (existing?.id) return existing.id;
 
     if (!effectiveEmployerId) return null;
 
