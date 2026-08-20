@@ -48,6 +48,22 @@ interface ShareData {
   workers: WorkerRow[];
 }
 
+async function resolveTaskImageUrl(imagePath: string | null | undefined): Promise<string | undefined> {
+  if (!imagePath) return undefined;
+  if (/^(https?:|data:)/.test(imagePath)) return imagePath;
+
+  const buckets = ['pipeline-task-images', 'task-photos', 'kyc-documents', 'documents', 'chat-attachments', 'public'];
+  for (const bucket of buckets) {
+    try {
+      const { data: signed, error } = await supabase.storage.from(bucket).createSignedUrl(imagePath, 86400);
+      if (signed?.signedUrl && !error) {
+        return signed.signedUrl;
+      }
+    } catch {}
+  }
+  return undefined;
+}
+
 export default function PublicPipelineView() {
   const { shareToken } = useParams<{ shareToken: string }>();
   const [data, setData] = useState<ShareData | null>(null);
@@ -64,7 +80,32 @@ export default function PublicPipelineView() {
       if (res.ok) {
         const json: ShareData = await res.json();
         if (json?.jobTitle && json?.workers) {
-          setData(json);
+          // Enrich backend completions with signed URLs if missing
+          const enrichedWorkers: WorkerRow[] = await Promise.all(
+            json.workers.map(async (w: WorkerRow) => {
+              const enrichedCompletions: TaskCompletion[] = await Promise.all(
+                w.completions.map(async (c: TaskCompletion) => {
+                  let img = c.imageUrl;
+                  if (!img) {
+                    try {
+                      const { data: row } = await supabase
+                        .from('application_task_completions')
+                        .select('image_path')
+                        .eq('id', c.id)
+                        .maybeSingle();
+                      if (row?.image_path) {
+                        img = await resolveTaskImageUrl(row.image_path);
+                      }
+                    } catch {}
+                  }
+                  return { ...c, imageUrl: img };
+                })
+              );
+              return { ...w, completions: enrichedCompletions };
+            })
+          );
+
+          setData({ ...json, workers: enrichedWorkers });
           setLastUpdated(new Date());
           setError(null);
           setIsLoading(false);
@@ -202,23 +243,7 @@ export default function PublicPipelineView() {
 
         const mappedCompletions: TaskCompletion[] = [];
         for (const c of completions || []) {
-          let resolvedImageUrl: string | undefined = undefined;
-          if (c.image_path) {
-            if (/^(https?:|data:)/.test(c.image_path)) {
-              resolvedImageUrl = c.image_path;
-            } else {
-              try {
-                const { data: signed } = await supabase.storage.from('pipeline-task-images').createSignedUrl(c.image_path, 86400);
-                resolvedImageUrl = signed?.signedUrl;
-              } catch {}
-              if (!resolvedImageUrl) {
-                try {
-                  const { data: signedKyc } = await supabase.storage.from('kyc-documents').createSignedUrl(c.image_path, 86400);
-                  resolvedImageUrl = signedKyc?.signedUrl;
-                } catch {}
-              }
-            }
-          }
+          const resolvedImageUrl = await resolveTaskImageUrl(c.image_path);
 
           mappedCompletions.push({
             id: c.id,
