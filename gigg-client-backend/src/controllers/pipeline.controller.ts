@@ -36,22 +36,66 @@ function mapTask(row: Record<string, any>) {
  * reopen instant, so a task whose original clock deadline already passed
  * gets a genuinely fresh window instead of being auto-failed again on the
  * very next read. */
+function parseJobDateTime(dateStr: string, timeStr: string): Date | null {
+  if (!dateStr || !timeStr) return null;
+  let cleanTime = timeStr.trim();
+
+  // If in 12-hour format e.g. "02:30 PM" or "2:30pm"
+  const match12 = cleanTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (match12) {
+    let hours = parseInt(match12[1], 10);
+    const minutes = match12[2];
+    const isPm = match12[4].toLowerCase() === 'pm';
+    if (isPm && hours < 12) hours += 12;
+    if (!isPm && hours === 12) hours = 0;
+    cleanTime = `${String(hours).padStart(2, '0')}:${minutes}:00`;
+  } else {
+    const parts = cleanTime.split(':');
+    if (parts.length === 2) {
+      cleanTime = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+    }
+  }
+
+  // Treat as Indian Standard Time (IST, UTC+05:30)
+  const isoWithTz = `${dateStr}T${cleanTime}+05:30`;
+  const d = new Date(isoWithTz);
+  if (!Number.isNaN(d.getTime())) return d;
+
+  const fallback = new Date(`${dateStr}T${cleanTime}`);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/** A task is clock-anchored to a specific time-of-day on the job's date
+ * instead of "whenever the worker opens the task": opening tasks anchor to
+ * job.reporting_time, closing tasks to job.end_time, and middle 'task' rows
+ * anchor to their own task.anchor_time if the employer set one (otherwise
+ * they keep the old relative-timer behavior — see the null return below).
+ * Returns the open/deadline instants for that anchor, or null if the task
+ * isn't clock-anchored or the anchor time is missing.
+ *
+ * If `completion.manually_reopened_at` is set (employer emergency reopen —
+ * see employerReopenTask), the window is instead computed relative to that
+ * reopen instant, so a task whose original clock deadline already passed
+ * gets a genuinely fresh window instead of being auto-failed again on the
+ * very next read. */
 function clockWindowFor(task: Record<string, any>, job: Record<string, any>, completion?: Record<string, any>): { opensAt: Date; deadline: Date } | null {
-  const time = task.kind === 'opening' ? job.reporting_time : task.kind === 'closing' ? job.end_time : task.anchor_time;
-  if (!time) return null;
+  const time = task.kind === 'opening' ? job.reporting_time : task.kind === 'closing' ? (job.end_time || job.reporting_time) : task.anchor_time;
+  if (!time || !job.date) return null;
 
   if (completion?.manually_reopened_at) {
     const reopenedAt = new Date(completion.manually_reopened_at);
-    return { opensAt: reopenedAt, deadline: new Date(reopenedAt.getTime() + task.open_minutes_after * 60_000) };
+    const openAfter = task.open_minutes_after !== undefined ? task.open_minutes_after : 30;
+    return { opensAt: reopenedAt, deadline: new Date(reopenedAt.getTime() + openAfter * 60_000) };
   }
 
-  if (!job.date) return null;
+  const anchor = parseJobDateTime(job.date, time);
+  if (!anchor) return null;
 
-  const anchor = new Date(`${job.date}T${time}`);
-  if (Number.isNaN(anchor.getTime())) return null;
+  const openBefore = task.open_minutes_before !== undefined ? task.open_minutes_before : 15;
+  const openAfter = task.open_minutes_after !== undefined ? task.open_minutes_after : 30;
 
-  const opensAt = new Date(anchor.getTime() - task.open_minutes_before * 60_000);
-  const deadline = new Date(anchor.getTime() + task.open_minutes_after * 60_000);
+  const opensAt = new Date(anchor.getTime() - openBefore * 60_000);
+  const deadline = new Date(anchor.getTime() + openAfter * 60_000);
   return { opensAt, deadline };
 }
 

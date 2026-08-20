@@ -13,6 +13,7 @@ import { parseDosAndDonts } from '../constants';
 import { supabase } from '../../../lib/supabase';
 import { getPersonalizedJobBadge } from '../../../components/shared/Cards';
 import { NegotiatedPayModal } from '../components/NegotiatedPayModal';
+import { formatTime12Hour } from '../../../utils/formatters';
 import { clsx } from 'clsx';
 
 export default function JobDetails() {
@@ -385,7 +386,7 @@ export default function JobDetails() {
             <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-dark-600 flex items-center justify-center text-slate-500 flex-shrink-0"><Calendar size={18} /></div>
             <div>
               <p className="text-sm font-bold text-slate-900 dark:text-white">{job.date}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Report at {job.reportingTime}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Report at {formatTime12Hour(job.reportingTime)}</p>
             </div>
           </div>
           <div className="flex gap-4">

@@ -223,7 +223,7 @@ export default function PipelineManager() {
     }
   };
 
-  const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
 
   return (
     <div className="pb-24 font-sans bg-slate-50 dark:bg-dark-900 min-h-screen">

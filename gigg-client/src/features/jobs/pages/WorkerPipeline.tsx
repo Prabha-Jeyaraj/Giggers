@@ -259,7 +259,7 @@ export default function WorkerPipeline() {
                 : null;
               const isPastResponseWindow = status === 'in_progress' && deadlineMs !== null && now > deadlineMs;
 
-              const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+              const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
 
               return (
                 <div key={task.id} className={clsx(
